@@ -1,0 +1,16 @@
+# Several QoL contract tests read source files whole and match multi-line text joined with `\n`,
+# and the docs tests measure README/CHANGELOG sizes. Keeping QoL's .cs and .md files LF on every
+# checkout makes the bytes on disk match what the tests expect, whatever core.autocrlf says.
+BlueSage_QoL_Tweaks_Beta/**/*.cs text eol=lf
+BlueSage_QoL_Tweaks_Beta/**/*.md text eol=lf
+
+# Test fixtures pinned by exact SHA-256 are stored byte-for-byte.
+BlueSage_QoL_Tweaks_Beta/BlueSage_QoL_Tweaks_Beta.Tests/Fixtures/** -text
+BlueSagePatched_PlayerLimitLift/tools/baselines/** -text
+
+# Pinned third-party binaries are stored byte-for-byte.
+third-party/** -text
+
+# PLL patch sources are hash-pinned (narrow-delta proof against the 1.1.5 reconstruction) on their LF bytes.
+# Force LF on checkout so a fresh clone or seal worktree under core.autocrlf=true hashes the same.
+BlueSagePatched_PlayerLimitLift/src/**/*.cs text eol=lf

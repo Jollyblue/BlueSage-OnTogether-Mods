@@ -1,0 +1,9 @@
+{
+    "name": "BlueSage_QoL_Tweaks_Beta",
+    "version_number": "0.2.5",
+    "website_url": "https://discord.gg/JujMEwtN3q",
+    "description": "Cozy On-Together comfort tools: click-to-open menus, in-game hotkeys, a Fishing Aid for sore hands, host welcome messages, Work/Relax stats, readable chat, styling, reconnect help, and safer player helpers.",
+    "dependencies": [
+        "BepInEx-BepInExPack-5.4.2305"
+    ]
+}

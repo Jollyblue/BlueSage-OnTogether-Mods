@@ -1,0 +1,13 @@
+# Build output
+bin/
+obj/
+.tmp/
+dist/
+TestResults/
+test-results/
+
+# Editor and agent state
+.vs/
+.vscode/
+.claude/
+*.user

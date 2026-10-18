@@ -1,0 +1,14 @@
+<Project>
+  <!--
+    Pins LangVersion for the QoL test project only. Newer SDKs resolve LangVersion=latest to C# 14,
+    which changed overload resolution for span conversions: Members.Reverse() on a string[] now binds
+    to the in-place MemoryExtensions.Reverse(Span<T>) instead of Enumerable.Reverse<T>, and one test
+    stops compiling (CS0023). This is a documented C# 14 breaking change, not a source bug.
+
+    .targets (not .props) on purpose: MSBuild imports .targets after the project body, so this wins
+    over the project's own LangVersion=latest.
+  -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'BlueSage_QoL_Tweaks_Beta.Tests'">
+    <LangVersion>12</LangVersion>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,9 @@
+{
+    "name": "BlueSagePatched_PlayerLimitLift",
+    "version_number": "1.1.8",
+    "website_url": "https://discord.gg/JujMEwtN3q",
+    "description": "Host-only On-Together lobby patch: up to 128 joinable slots plus host, shift-click sizing, large-lobby chat, and optional QoL companion notes.",
+    "dependencies": [
+        "BepInEx-BepInExPack-5.4.2305"
+    ]
+}
