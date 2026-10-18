@@ -43,8 +43,8 @@ The default paths in the project files are the ones on our own machine. Change t
 - Community Discord: https://discord.gg/JujMEwtN3q
 - Website: https://bluesagetech.net/ (Coming Soon)
 
-## Credits
+## License and credits
 
-PlayerLimitLift is a community patch of officer_balls' original PlayerLimitLift. QoL was inspired by community mods from AndrewLin, Tiny_Plume, jaide, OnToWelcomeCommittee, and officer_balls. Thank you all ♥
+BlueSage's own code is released under the GPL-3.0 license (see `LICENSE`). PlayerLimitLift began as a community patch of officer_balls' original PlayerLimitLift, which was published without a license; `NOTICE.md` explains what that means and how officer_balls can reach us. QoL is its own code, inspired by community mods from AndrewLin, Tiny_Plume, jaide, OnToWelcomeCommittee, and officer_balls. Thank you all ♥
 
 Made by Blue + Sage = BlueSage with superpowered neurodivergence ♥
