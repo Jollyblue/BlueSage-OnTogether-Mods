@@ -15,7 +15,9 @@ public sealed class CommandLoggingPrivacyContractTests
         Assert.Multiple(() =>
         {
             Assert.That(registry, Does.Contain("internal static bool TryParse"));
-            Assert.That(plugin, Does.Contain("BlueSageCommandRegistry.TryParse(text, out string commandName, out _)"));
+            // Round 5h: the arguments are parsed only to decide whether a command also toasts (CommandToastPolicy); the log line stays redacted.
+            Assert.That(plugin, Does.Contain("BlueSageCommandRegistry.TryParse(text, out string commandName, out string commandArguments)"));
+            Assert.That(plugin, Does.Not.Contain("command handled locally: /\" + loggedCommand + \" \" + commandArguments"));
             Assert.That(plugin, Does.Contain("(arguments redacted)."));
             Assert.That(plugin, Does.Not.Contain("command handled locally: {text}"));
         });

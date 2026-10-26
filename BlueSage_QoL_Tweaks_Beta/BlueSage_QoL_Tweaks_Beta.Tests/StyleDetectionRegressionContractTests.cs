@@ -45,7 +45,7 @@ public sealed class StyleDetectionRegressionContractTests
         Assert.That(source, Does.Contain("HydrateCurrentStatus(detected)"));
         Assert.That(source, Does.Contain("HydrateSpoons(detected)"));
         Assert.That(source, Does.Contain("detected?.DriftSummary"));
-        Assert.That(source, Does.Contain("Custom Rich Text mode"));
+        Assert.That(source, Does.Contain("Your own style codes are kept exactly as typed."));
     }
 
     [Test]
@@ -54,7 +54,9 @@ public sealed class StyleDetectionRegressionContractTests
         string source = File.ReadAllText(Path.Combine(ProjectRoot, "src", "Plugin.cs"));
 
         Assert.That(source, Does.Not.Contain("preferLiveBaseName"));
-        Assert.That(Count(source, "TryApplyDisplayNameDraft(draft, \"Style UI: name updated.\""), Is.EqualTo(2));
+        // Voice pass (2026-10-23): "Style Helper", never "Style UI", in player text.
+        Assert.That(Count(source, "TryApplyDisplayNameDraft(draft, \"Style Helper: name updated.\""), Is.EqualTo(2));
+        Assert.That(source, Does.Not.Contain("\"Style UI"));
         Assert.That(source, Does.Contain("TryApplyDisplayNameDraft(draft, \"Status Helper: name updated.\""));
     }
 

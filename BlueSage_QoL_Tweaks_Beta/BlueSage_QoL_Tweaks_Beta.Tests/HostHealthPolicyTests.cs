@@ -28,6 +28,22 @@ public sealed class HostHealthPolicyTests
         Assert.That(decision.Actions, Does.Contain(HostHealthAction.RefreshLobbyMetadata));
     }
 
+    // Round 5b (2026-10-23): on 10-23 the host saw LobbyOwnerInvalid for 40 minutes and was told nothing while
+    // guests cycled through reconnects. The policy now asks for one host notice; the plugin shows it once per streak.
+    [Test]
+    public void Evaluate_AsksForAHostNotice_WhenTheSteamLobbyIsGone()
+    {
+        HostHealthDecision gone = HostHealthPolicy.Evaluate(HostHealthInput.DefaultForTests(lobbyValid: false));
+        HostHealthDecision healthy = HostHealthPolicy.Evaluate(HostHealthInput.DefaultForTests(
+            localSteamId: "111",
+            lobbyOwnerSteamId: "111",
+            hostPersonaName: "Blue"));
+
+        Assert.That(gone.Issues, Does.Contain(HostHealthIssue.LobbyOwnerInvalid));
+        Assert.That(gone.Actions, Does.Contain(HostHealthAction.NotifyHostLobbyLost));
+        Assert.That(healthy.Actions, Does.Not.Contain(HostHealthAction.NotifyHostLobbyLost));
+    }
+
     [Test]
     public void Evaluate_DoesNotWarn_WhenOnlyServerFlagIsMissing()
     {

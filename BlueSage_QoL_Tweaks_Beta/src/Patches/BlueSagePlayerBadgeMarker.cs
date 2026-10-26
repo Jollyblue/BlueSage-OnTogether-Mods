@@ -222,6 +222,13 @@ internal sealed class BlueSagePlayerBadgeMarker :
         _nativeNameApplied = string.Empty;
     }
 
+    // Round 4 Stage E #12: the tooltip draws with GUI.Box only, so the per-frame IMGUI layout pass Unity would run
+    // for this OnGUI is pure cost. Hover comes from the UGUI pointer events below, which this does not touch.
+    private void Awake()
+    {
+        useGUILayout = false;
+    }
+
     public void OnPointerEnter(PointerEventData eventData)
     {
         _hovered = !string.IsNullOrWhiteSpace(TooltipText);

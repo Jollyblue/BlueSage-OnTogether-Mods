@@ -1,4 +1,6 @@
+using BlueSage.QoLTweaks.Core;
 using Steamworks;
+using UnityEngine;
 
 namespace BlueSage.QoLTweaks;
 
@@ -29,6 +31,9 @@ internal static class SteamRuntimeFacade
 {
     private static readonly object Sync = new object();
     private static SteamRuntimeSnapshot _lastKnown = SteamRuntimeSnapshot.Empty;
+    // Round 4 Stage E #10: the shutdown snapshot only needs a recent tuple; probing Steam every frame was waste.
+    internal const float CaptureIntervalSeconds = 1f;
+    private static float _lastCaptureAt = -1f;
 
     internal static void CaptureLive()
     {
@@ -37,6 +42,13 @@ internal static class SteamRuntimeFacade
             return;
         }
 
+        float now = Time.unscaledTime;
+        if (!NativeLookupCooldownPolicy.ShouldScan(_lastCaptureAt, now, CaptureIntervalSeconds))
+        {
+            return;
+        }
+
+        _lastCaptureAt = now;
         try
         {
             if (!SteamManager.Initialized ||

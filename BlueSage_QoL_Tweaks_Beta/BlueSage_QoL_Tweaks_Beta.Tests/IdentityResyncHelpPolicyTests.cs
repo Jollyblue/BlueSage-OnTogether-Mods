@@ -55,7 +55,8 @@ public sealed class IdentityResyncHelpPolicyTests
         {
             Assert.That(presentation.Healthy, Is.False);
             Assert.That(presentation.StatusHeading, Is.EqualTo("Some player rows are still being matched"));
-            Assert.That(presentation.WhatThisMeans, Does.Contain("keeps player-specific host actions locked"));
+            Assert.That(presentation.WhatThisMeans, Does.Contain("keeps host actions locked on the rows it can't match"), "Round 5e: per-row, not lobby-wide.");
+            Assert.That(presentation.WhatThisMeans, Does.Contain("matched players can still be managed"));
             Assert.That(presentation.WhatToDo, Does.Contain("already checking again"));
             Assert.That(presentation.RefreshExplanation, Does.Contain("does not kick, mute, report, ban, or delete"));
             Assert.That(presentation.RecheckExplanation, Does.Contain("compares each visible row"));
@@ -107,11 +108,11 @@ public sealed class IdentityResyncHelpPolicyTests
 
         string refresh = IdentityResyncHelpPolicy.FormatActionResult(
             "refresh",
-            "Identity refresh rebuilt 1 BlueSage-owned local row surface(s) from already-available native state.",
+            "Player list refreshed. No player action was taken.",
             coverage);
         string repair = IdentityResyncHelpPolicy.FormatActionResult(
             "repair",
-            "Identity repair completed one bounded exact-correlation transaction: targetedRows=0, healedRows=0, lockedRows=0.",
+            "Player matching recheck finished. Every visible player is matched safely. No player action was taken.",
             coverage);
 
         Assert.Multiple(() =>
@@ -136,7 +137,7 @@ public sealed class IdentityResyncHelpPolicyTests
             ambiguousRows: 0,
             captureAvailable: false,
             errorReason: "Steam lobby owner unavailable");
-        const string blocked = "Identity repair stopped because this client is not the exact current Steam lobby owner and active PurrNet Host.";
+        const string blocked = "Only the lobby host can recheck player matches. Nothing changed.";
 
         string result = IdentityResyncHelpPolicy.FormatActionResult("repair", blocked, coverage);
 

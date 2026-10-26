@@ -21,13 +21,32 @@ public sealed class ModerationProtocolPolicyTests
         });
     }
 
-    [TestCase("kick")]
+    // Round 4 Stage E #3: "kick" moved from the rejected list to the accepted one (deliberate pin change); "warn" now
+    // stands in as the unknown action.
+    [TestCase("warn")]
     [TestCase("BAN")]
     [TestCase("")]
     public void Rejects_unknown_or_noncanonical_actions(string action)
     {
         string text = ModerationProtocolPolicy.Prefix + action + ":76561198012345678:C003:1700000000:ab12CD34";
         Assert.That(ModerationProtocolPolicy.TryParse(text, out _), Is.False);
+    }
+
+    [TestCase("ban")]
+    [TestCase("unban")]
+    [TestCase("kick")]
+    [TestCase("mute")]
+    [TestCase("unmute")]
+    public void Accepts_the_five_host_actions_in_member_data_and_chat_shaped_requests(string action)
+    {
+        string memberData = ModerationProtocolPolicy.BuildMemberData(action, "76561198012345678", "none", 1700000000, "ab12CD34");
+        Assert.Multiple(() =>
+        {
+            Assert.That(ModerationProtocolPolicy.IsModerationAction(action), Is.True);
+            Assert.That(memberData, Is.Not.Empty);
+            Assert.That(ModerationProtocolPolicy.TryParseMemberData(memberData, out ModerationRequest request), Is.True);
+            Assert.That(request.Action, Is.EqualTo(action));
+        });
     }
 
     [TestCase("123")]

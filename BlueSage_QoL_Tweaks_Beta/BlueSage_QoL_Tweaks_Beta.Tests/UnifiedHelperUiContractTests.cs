@@ -44,8 +44,8 @@ public sealed class UnifiedHelperUiContractTests
         Assert.Multiple(() =>
         {
             Assert.That(menu, Does.Contain("DrawTabButton(4, isHost ? \"Host Tools\" : \"Safety\""));
-            Assert.That(menu, Does.Contain("HELPER DETECTED  •  Waiting for compatible host capability"));
-            Assert.That(menu, Does.Contain("Protected player details and actions remain locked"));
+            Assert.That(menu, Does.Contain("Helper assigned  •  waiting for the host"));
+            Assert.That(menu, Does.Contain("You're an assigned Helper here. Your tools unlock by themselves once the host's BlueSage answers."));
             Assert.That(menu, Does.Contain("const int pageSize = 8;"));
             Assert.That(menu, Does.Contain("SteamID64: \" + selectedRow.SteamId"));
             Assert.That(menu, Does.Contain("Copy SteamID64"));

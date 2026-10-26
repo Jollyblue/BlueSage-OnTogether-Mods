@@ -114,7 +114,8 @@ public sealed class NativeSweepCoordinationPolicyTests
                     alreadyMigrated: false),
                 Is.False,
                 "An existing explicit off value must never be forced on.");
-            Assert.That(SweepSettingsPolicy.DefaultIntervalMinutes, Is.EqualTo(15));
+            // Round 4 Stage G (2026-10-20): 40 minutes, clear of vanilla's 30-minute cleanup (was 15).
+            Assert.That(SweepSettingsPolicy.DefaultIntervalMinutes, Is.EqualTo(40));
         });
     }
 

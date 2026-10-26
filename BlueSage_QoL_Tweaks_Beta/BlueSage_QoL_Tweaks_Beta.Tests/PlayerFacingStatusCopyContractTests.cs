@@ -32,7 +32,7 @@ public sealed class PlayerFacingStatusCopyContractTests
             Assert.That(handler, Does.Contain("action == \"attestation\""));
             Assert.That(handler, Does.Not.Contain("action == \"status\" || action == \"?\" || action == \"attestation\""));
             Assert.That(handler, Does.Not.Contain("CommunityBanListController.StatusText(),"));
-            Assert.That(handler, Does.Contain("Attestation: local BlueSageAudit/community-ban-source-attestation.json"));
+            Assert.That(handler, Does.Contain("Attestation: local BlueSageQoLModSuite/trackers/community-ban-attestation.json"));
         });
     }
 

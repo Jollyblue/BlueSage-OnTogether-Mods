@@ -117,7 +117,7 @@ internal sealed class StyleHelperWindow : MonoBehaviour
             HydrateCurrentStatus(detected);
             HydrateSpoons(detected);
             RebuildPreview();
-            MarkSaved(detected?.DriftSummary ?? "Detected current in-game values. Edit a field to start a draft.");
+            MarkSavedQuiet(detected?.DriftSummary ?? "Detected current in-game values. Edit a field to start a draft.");
         }
     }
 
@@ -261,7 +261,7 @@ internal sealed class StyleHelperWindow : MonoBehaviour
         GUILayout.BeginVertical(_boxStyle, GUILayout.ExpandHeight(false));
         GUILayout.Label("NAME STYLER: type the name text players should see, choose color/bold/italic/gradient, then use Apply Name Styler or Copy Name Style Text.", _smallStyle);
         GUILayout.Label("Tip: choose Color A/B/C first, then tap a swatch. The highlighted slot is the one the shared color library will change.", _smallStyle);
-        GUILayout.Label("Detected rich-text tags stay visible and editable here, including nested <b>, <rotate>, and <size>. Undo/Redo keeps up to 50 steps.", _smallStyle);
+        GUILayout.Label("Style codes already in your name stay visible and editable here, even nested ones like <b>, <rotate> and <size>. Undo/Redo keeps up to 50 steps.", _smallStyle);
         GUILayout.Space(4f);
         GUILayout.Label("Text", _labelStyle);
         // Keep the complete draft in the editor. Apply/copy validates the configured
@@ -282,7 +282,7 @@ internal sealed class StyleHelperWindow : MonoBehaviour
         DrawModeRow();
         if ((_text ?? string.Empty).IndexOf('<') >= 0)
         {
-            GUILayout.Label("Custom Rich Text mode: the exact balanced markup is authoritative. BlueSage verifies tag structure; the game decides whether each tag/value renders. Presets do not rewrite custom markup unless you remove it first.", _smallStyle);
+            GUILayout.Label("Your own style codes are kept exactly as typed. Check the preview; the game decides which codes show. The color buttons won't rewrite your codes unless you remove them first.", _smallStyle);
         }
         GUILayout.Space(6f);
         DrawPreview();
@@ -313,7 +313,7 @@ internal sealed class StyleHelperWindow : MonoBehaviour
         {
             CaptureUndo("Clear Status", restoreStatus: true);
             bool applied = false;
-            _message = Plugin.Instance != null ? Plugin.Instance.TryClearStatusFromStyleUi(out applied) : "Style UI: plugin is not ready yet.";
+            _message = Plugin.Instance != null ? Plugin.Instance.TryClearStatusFromStyleUi(out applied) : "Style Helper: BlueSage isn't ready yet.";
             MarkApplyOutcome(applied, "Live status cleared. Name and Spoons settings were left alone.", "Status was not cleared; fix the reported problem and try again.");
         }
         GUILayout.EndHorizontal();
@@ -612,14 +612,14 @@ internal sealed class StyleHelperWindow : MonoBehaviour
             {
                 CaptureUndo("Apply Status Styler", restoreStatus: true);
                 bool applied = false;
-                _message = Plugin.Instance != null ? Plugin.Instance.TryApplyStatusFromStyleUi(null, _status, CleanColor(_statusColor), out applied) : "Style UI: plugin is not ready yet.";
+                _message = Plugin.Instance != null ? Plugin.Instance.TryApplyStatusFromStyleUi(null, _status, CleanColor(_statusColor), out applied) : "Style Helper: BlueSage isn't ready yet.";
                 MarkApplyOutcome(applied, "Status Styler applied to your live name.", "Status Styler did not apply; fix the reported problem and try again.");
             }
             else if (_tab != 1 && _previewIsValid)
             {
                 CaptureUndo("Apply Name Styler", restoreName: true);
                 bool applied = false;
-                _message = Plugin.Instance != null ? Plugin.Instance.TryApplyStyledNameFromStyleUi(_preview, out applied) : "Style UI: plugin is not ready yet.";
+                _message = Plugin.Instance != null ? Plugin.Instance.TryApplyStyledNameFromStyleUi(_preview, out applied) : "Style Helper: BlueSage isn't ready yet.";
                 MarkApplyOutcome(applied, "Name Styler applied to your live name.", "Name Styler did not apply; fix the reported problem and try again.");
             }
             else
@@ -636,8 +636,8 @@ internal sealed class StyleHelperWindow : MonoBehaviour
                 CaptureUndo(copyLabel);
                 GUIUtility.systemCopyBuffer = _preview ?? string.Empty;
                 _message = "Copied. Paste it into your name, ID card, room, status, or chat field.";
-                Plugin.AddLocalNotificationWithToast("Style UI: copied styled text.");
-                MarkAction("Copied current style text to clipboard.");
+                Plugin.AddLocalNotificationWithToast("Style Helper: copied styled text.");
+                MarkActionQuiet("Copied current style text to clipboard.");
             }
             else
             {
@@ -715,7 +715,7 @@ internal sealed class StyleHelperWindow : MonoBehaviour
             _previewIsValid = text.Length <= Plugin.LockedMaxIdCardCharacters;
             _preview = text;
             _message = _previewIsValid
-                ? $"Ready: {_preview.Length}/{Plugin.LockedMaxIdCardCharacters} chars. Custom Rich Text mode preserves exact balanced markup; verify uncommon TMP tags in preview/game."
+                ? $"Ready: {_preview.Length}/{Plugin.LockedMaxIdCardCharacters} chars. Your own style codes are kept exactly as typed. Check the preview; the game decides which codes show."
                 : $"Styled text is too long ({text.Length}/{Plugin.LockedMaxIdCardCharacters}).";
             return;
         }
@@ -911,7 +911,7 @@ internal sealed class StyleHelperWindow : MonoBehaviour
         bool applied = false;
         string applyMessage = Plugin.Instance != null
             ? Plugin.Instance.TryApplyStyledNameFromStyleUi(_preview, out applied)
-            : "Style UI: plugin is not ready yet.";
+            : "Style Helper: BlueSage isn't ready yet.";
         _message = (applied ? "Loaded and applied template " : "Loaded template but could not apply it ") + index + ". " + applyMessage;
         MarkApplyOutcome(applied, "Template " + index + " loaded and applied to your live name.", "Template " + index + " remains a draft because the live apply failed.");
     }
@@ -1130,7 +1130,15 @@ internal sealed class StyleHelperWindow : MonoBehaviour
         _stateDetail = detail ?? "Changes are local until you apply or save.";
     }
 
+    // Round 5h: a saved or applied change also shows as a toast (one shared rule). Spots that raise their own toast use
+    // MarkActionQuiet, and a failed apply is never silent.
     private void MarkSaved(string detail)
+    {
+        MarkSavedQuiet(detail);
+        Plugin.Instance?.ShowToast(ToastPolicy.Summarize(detail));
+    }
+
+    private void MarkSavedQuiet(string detail)
     {
         _stateLabel = "Saved";
         _stateDetail = detail ?? "Ready.";
@@ -1145,10 +1153,17 @@ internal sealed class StyleHelperWindow : MonoBehaviour
         else
         {
             MarkDraft(failedDetail);
+            Plugin.Instance?.ShowToast(ToastPolicy.Summarize(failedDetail));
         }
     }
 
     private void MarkAction(string detail)
+    {
+        MarkActionQuiet(detail);
+        Plugin.Instance?.ShowToast(ToastPolicy.Summarize(detail));
+    }
+
+    private void MarkActionQuiet(string detail)
     {
         _stateLabel = "Done";
         _stateDetail = detail ?? "Done.";

@@ -33,9 +33,11 @@ public sealed class CompletionAwareSweepContractTests
         Assert.Multiple(() =>
         {
             Assert.That(completion, Does.Contain("Log.LogInfo($\"[BlueSageSweep]"));
-            Assert.That(completion, Does.Contain("if (NotifyOnSweep.Value)"));
-            Assert.That(completion, Does.Contain("AddLocalNotification(\"BlueSage QoL swept unused assets.\")"));
-            Assert.That(source, Does.Contain("NotifyOnSweep = Config.Bind(\"Asset Sweep\", \"NotifyOnSweep\", true,"));
+            // Round 5 F: automatic sweeps are silent unless asked for; manual cleanups always confirm.
+            Assert.That(completion, Does.Contain("if (SweepSettingsPolicy.ShouldNotifyOnSweep(NotifyOnSweep.Value, reason))"));
+            Assert.That(completion, Does.Contain("AddLocalNotification(SweepCompletedNotice)"));
+            Assert.That(source, Does.Contain("internal const string SweepCompletedNotice = SweepMenuActionPolicy.CompletedNotice;"));
+            Assert.That(source, Does.Contain("NotifyOnSweep = Config.Bind(\"Asset Sweep\", \"NotifyOnSweep\", false,"));
         });
     }
 

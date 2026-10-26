@@ -21,8 +21,8 @@ internal sealed class CloneShieldController : MonoBehaviour
     private readonly Dictionary<string, int> _missingIncidentScans = new Dictionary<string, int>(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _nonMatchingIncidentScans = new Dictionary<string, int>(StringComparer.Ordinal);
     private float _nextScanAt;
-    private float _nextAlignmentWaitLogAt;
-    private bool _alignmentWaitWasLogged;
+    private StableStateLogState _alignmentLogState;
+    private string _alignmentWaitReason = string.Empty;
     private string _observedLobbyCode = string.Empty;
     private bool _wasEnabled;
 
@@ -103,10 +103,14 @@ internal sealed class CloneShieldController : MonoBehaviour
                 LogAlignmentWait(verificationError);
                 return;
             }
-            if (_alignmentWaitWasLogged)
+            // Round 5 C1: recovery is announced only once alignment has held (StableStateLogPolicy), so a roster
+            // that flickers between aligned and waiting every few seconds writes nothing at all.
+            if (StableStateLogPolicy.Observe(ref _alignmentLogState, "aligned", remindWhileHeld: false, Time.unscaledTime) == StableStateLogDecision.Announce &&
+                _alignmentWaitReason.Length > 0)
+            {
                 Plugin.Log?.LogDebug("Clone Shield roster alignment recovered; moderation-grade incident observation resumed.");
-            _alignmentWaitWasLogged = false;
-            _nextAlignmentWaitLogAt = 0f;
+                _alignmentWaitReason = string.Empty;
+            }
 
             string localSteamId = GetLocalSteamId();
             var verifiedSet = new HashSet<string>(verifiedSteamIds, StringComparer.Ordinal);
@@ -330,19 +334,29 @@ internal sealed class CloneShieldController : MonoBehaviour
         _lastWarningTimes.Clear();
         _missingIncidentScans.Clear();
         _nonMatchingIncidentScans.Clear();
-        _alignmentWaitWasLogged = false;
-        _nextAlignmentWaitLogAt = 0f;
+        StableStateLogPolicy.Reset(ref _alignmentLogState);
+        _alignmentWaitReason = string.Empty;
         CloneIncidentLedger.Reset(string.Empty);
         CloneIncidentActionController.ResetLobbyState();
     }
 
+    // Round 5 C1 (audit of Blue's 37.5 h host: 1,701 of these lines, one per minute for 17.5 h straight, because
+    // a public lobby has someone loading in or dropping out 67% of the time). One line when the wait has held for
+    // a minute, one reminder per hour carrying the age, one line on recovery. Nothing for a flicker.
     private void LogAlignmentWait(string detail)
     {
-        if (_alignmentWaitWasLogged && Time.unscaledTime < _nextAlignmentWaitLogAt) return;
-        _alignmentWaitWasLogged = true;
-        _nextAlignmentWaitLogAt = Time.unscaledTime + 60f;
         string reason = string.IsNullOrWhiteSpace(detail) ? "native/Steam roster verification is not ready" : detail;
-        Plugin.Log?.LogDebug("Clone Shield waiting for aligned unique Steam/PurrNet/Steam-lobby roster before recording evidence: " + reason + ". Further identical waits are suppressed for 60 seconds.");
+        _alignmentWaitReason = reason;
+        float now = Time.unscaledTime;
+        switch (StableStateLogPolicy.Observe(ref _alignmentLogState, "waiting", remindWhileHeld: true, now))
+        {
+            case StableStateLogDecision.Announce:
+                Plugin.Log?.LogDebug("Clone Shield waiting for aligned unique Steam/PurrNet/Steam-lobby roster before recording evidence: " + reason + ". One reminder per hour while it lasts.");
+                break;
+            case StableStateLogDecision.Reminder:
+                Plugin.Log?.LogDebug("Clone Shield still waiting after " + (int)(_alignmentLogState.AnnouncedAgeSeconds(now) / 60f) + " min: " + reason + ".");
+                break;
+        }
     }
 
     private void ReconcileAbsentIncidents(HashSet<string> verifiedSteamIds)

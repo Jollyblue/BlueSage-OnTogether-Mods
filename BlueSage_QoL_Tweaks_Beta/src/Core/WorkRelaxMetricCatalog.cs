@@ -43,13 +43,15 @@ internal sealed class WorkRelaxMetricDefinition
         WorkRelaxMetricFamily family,
         WorkRelaxMetricUnit unit,
         bool isAdditive,
-        WorkRelaxEpochScope epochScope)
+        WorkRelaxEpochScope epochScope,
+        string? derivedFrom = null)
     {
         Key = key;
         Family = family;
         Unit = unit;
         IsAdditive = isAdditive;
         EpochScope = epochScope;
+        DerivedFrom = derivedFrom;
     }
 
     internal string Key { get; }
@@ -57,6 +59,13 @@ internal sealed class WorkRelaxMetricDefinition
     internal WorkRelaxMetricUnit Unit { get; }
     internal bool IsAdditive { get; }
     internal WorkRelaxEpochScope EpochScope { get; }
+
+    // Round 5d (advisor-cleared): the game's Today/Week/Month counters move by exactly the same amounts as their
+    // lifetime Total in the same call, so they are no longer written as their own rows. Their Work / Relax split is
+    // derived from the Total rows (newest first, up to the game's own value). One flag, four readers: the recorder,
+    // reconciliation, the allocation editor and the Report.
+    internal string? DerivedFrom { get; }
+    internal bool IsDerived => DerivedFrom != null;
 
     internal bool UsesFloatingTolerance =>
         Unit == WorkRelaxMetricUnit.Seconds || Unit == WorkRelaxMetricUnit.Minutes;
@@ -68,12 +77,12 @@ internal static class WorkRelaxMetricCatalog
         Array.AsReadOnly(new[]
         {
             Count("TotalSessionCount", WorkRelaxMetricFamily.PomodoroSession, WorkRelaxEpochScope.Lifetime),
-            Count("TodaySessionCount", WorkRelaxMetricFamily.PomodoroSession, WorkRelaxEpochScope.Day),
-            Count("WeekFocusCount", WorkRelaxMetricFamily.PomodoroSession, WorkRelaxEpochScope.Week),
-            Count("MonthFocusCount", WorkRelaxMetricFamily.PomodoroSession, WorkRelaxEpochScope.Month),
-            Seconds("TodayFocusDuration", WorkRelaxEpochScope.Day),
-            Seconds("WeekFocusDuration", WorkRelaxEpochScope.Week),
-            Seconds("MonthFocusDuration", WorkRelaxEpochScope.Month),
+            Count("TodaySessionCount", WorkRelaxMetricFamily.PomodoroSession, WorkRelaxEpochScope.Day, "TotalSessionCount"),
+            Count("WeekFocusCount", WorkRelaxMetricFamily.PomodoroSession, WorkRelaxEpochScope.Week, "TotalSessionCount"),
+            Count("MonthFocusCount", WorkRelaxMetricFamily.PomodoroSession, WorkRelaxEpochScope.Month, "TotalSessionCount"),
+            Seconds("TodayFocusDuration", WorkRelaxEpochScope.Day, "TotalFocusDuration"),
+            Seconds("WeekFocusDuration", WorkRelaxEpochScope.Week, "TotalFocusDuration"),
+            Seconds("MonthFocusDuration", WorkRelaxEpochScope.Month, "TotalFocusDuration"),
             NonAdditive("AverageDailyFocus", WorkRelaxMetricFamily.PomodoroSession, WorkRelaxMetricUnit.Count),
             NonAdditive("TotalDayOfFocus", WorkRelaxMetricFamily.PomodoroSession, WorkRelaxMetricUnit.Count),
             NonAdditive("CurrentStreak", WorkRelaxMetricFamily.PomodoroSession, WorkRelaxMetricUnit.Count),
@@ -174,11 +183,15 @@ internal static class WorkRelaxMetricCatalog
     private static WorkRelaxMetricDefinition Count(
         string key,
         WorkRelaxMetricFamily family,
-        WorkRelaxEpochScope scope) =>
-        new(key, family, WorkRelaxMetricUnit.Count, true, scope);
+        WorkRelaxEpochScope scope,
+        string? derivedFrom = null) =>
+        new(key, family, WorkRelaxMetricUnit.Count, true, scope, derivedFrom);
 
-    private static WorkRelaxMetricDefinition Seconds(string key, WorkRelaxEpochScope scope) =>
-        new(key, WorkRelaxMetricFamily.PomodoroDuration, WorkRelaxMetricUnit.Seconds, true, scope);
+    private static WorkRelaxMetricDefinition Seconds(string key, WorkRelaxEpochScope scope, string? derivedFrom = null) =>
+        new(key, WorkRelaxMetricFamily.PomodoroDuration, WorkRelaxMetricUnit.Seconds, true, scope, derivedFrom);
+
+    internal static bool IsDerived(string? key) =>
+        key != null && ByKey.TryGetValue(key, out WorkRelaxMetricDefinition? metric) && metric.IsDerived;
 
     private static WorkRelaxMetricDefinition ActivityStart(string key) =>
         new(key, WorkRelaxMetricFamily.ActivityStart, WorkRelaxMetricUnit.Count, true, WorkRelaxEpochScope.Lifetime);

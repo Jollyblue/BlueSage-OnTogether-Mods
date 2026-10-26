@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using BepInEx;
 using BepInEx.Configuration;
+using BlueSage.QoLTweaks.Core;
 using HarmonyLib;
 using TMPro;
 using UnityEngine;
@@ -36,10 +37,15 @@ internal static class AvatarStyleSlotsBridge
     private static readonly MethodInfo UpdateCustomizationCameraMethod = AccessTools.Method(typeof(CustomizationUIController), "UpdateCustomizationCamera");
     private static readonly MethodInfo WaitAndCaptureMethod = AccessTools.Method(typeof(CustomizationUIController), "WaitAndCapture");
 
-    private static ConfigFile _config;
-    private static ConfigEntry<int> _selectedExtendedSlot;
-    private static readonly ConfigEntry<string>[] Names = new ConfigEntry<string>[TotalSlotCount - NativeSlotCount];
-    private static readonly ConfigEntry<string>[] Payloads = new ConfigEntry<string>[TotalSlotCount - NativeSlotCount];
+    private const int ExtendedSlotCount = TotalSlotCount - NativeSlotCount;
+    private static bool _storeLoaded;
+    private static bool _storeWritable;
+    private static string _storePath;
+    private static string _legacyConfigHash;
+    private static bool _readOnlyNoticeShown;
+    private static int _selectedSlot = -1;
+    private static readonly string[] SlotNames = new string[ExtendedSlotCount];
+    private static readonly string[] SlotPayloads = new string[ExtendedSlotCount];
     private static readonly Dictionary<int, TextMeshProUGUI> RowTexts = new();
     private static readonly Dictionary<int, GameObject> RowSelectedBgs = new();
     private static int _activeExtendedSlot = -1;
@@ -47,24 +53,303 @@ internal static class AvatarStyleSlotsBridge
     private static CustomizationUIController _lastController;
     private static CustomizationDataIDs3 _nativeSlotSnapshot;
     private static int _nativeSlotSnapshotIndex = -1;
+    private static bool _ownNativeWrite;
+    private static bool _loggedRedirect;
+    private static bool _loggedBlockedWrite;
+    private static int _persistBatchDepth;
+    private static bool _persistPending;
+    private static CustomizationDataIDs3 _wornSlotIds;
+    private static int _wornReadScope;
+    private static int _nativeWriterScope;
+
+    // Round 4 WS1: the setter redirect is active only inside the two vanilla writers of the current outfit
+    // (SetLemonadeHat, CloseAvatarPanel). Other mods' temporary outfit writes pass straight through untouched.
+    internal static void EnterNativeWriterScope() => _nativeWriterScope++;
+
+    internal static void ExitNativeWriterScope()
+    {
+        if (_nativeWriterScope > 0)
+        {
+            _nativeWriterScope--;
+        }
+    }
+
+    // Round 4 WS1: the getter redirect is active only inside vanilla PetManager.CheckClothingRequirements.
+    // The game saves with Newtonsoft JsonConvert, which serializes this public property; a global redirect
+    // would write the worn outfit into the save and the loader would push it into vanilla slot 1-3.
+    internal static void EnterWornReadScope() => _wornReadScope++;
+
+    internal static void ExitWornReadScope()
+    {
+        if (_wornReadScope > 0)
+        {
+            _wornReadScope--;
+        }
+    }
+
+    // Returns the cached worn slot 4-9 outfit by reference (read every frame): no allocation, no parsing.
+    internal static bool TryReadWornSlot(out CustomizationDataIDs3 ids)
+    {
+        ids = _wornSlotIds;
+        return _wornReadScope > 0 && ids != null && AvatarSlotWriteGuardPolicy.ShouldRedirectNativeWrite(_activeExtendedSlot, NativeSlotCount, TotalSlotCount, _ownNativeWrite);
+    }
 
     internal static bool IsExtendedActive => _activeExtendedSlot >= NativeSlotCount && _activeExtendedSlot < TotalSlotCount;
 
-    private static void EnsureConfig()
+    // Round 4 WS1: called from the PlayerDataZip setter guard. Returns true when the write was saved
+    // into the worn slot 4-9 instead, so the vanilla slot keeps its own outfit.
+    internal static bool TryRedirectNativeWrite(CustomizationDataIDs3 value)
     {
-        if (_config != null)
+        if (value == null)
+        {
+            return false;
+        }
+
+        switch (AvatarSlotWriteGuardPolicy.Decide(_activeExtendedSlot, NativeSlotCount, TotalSlotCount, _ownNativeWrite, _nativeWriterScope > 0))
+        {
+            case NativeWriteAction.Allow:
+                return false;
+            case NativeWriteAction.Block:
+                // Review R12: not one of the game's outfit writers. Saving it would put a temporary look into
+                // vanilla slot 1-3 through the autosave; ignoring it changes no visuals (rendering never reads this).
+                if (!_loggedBlockedWrite)
+                {
+                    _loggedBlockedWrite = true;
+                    Plugin.Log?.LogWarning($"Avatar style slot {_activeExtendedSlot + 1} is worn, so an outfit write from outside the game's own outfit writers was ignored to keep vanilla slots 1-3 unchanged (logged once per session).");
+                }
+
+                return true;
+        }
+
+        try
+        {
+            EnsureSlotStore();
+            SaveExtendedData(CloneIds(value), _activeExtendedSlot);
+            if (!_loggedRedirect)
+            {
+                _loggedRedirect = true;
+                Plugin.Log?.LogInfo($"Avatar style slot {_activeExtendedSlot + 1} kept a game outfit change; vanilla slots 1-3 stay untouched.");
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            // Fail closed: the vanilla write is still blocked, so slots 1-3 stay safe. This one change is not kept anywhere.
+            Plugin.Log?.LogWarning($"Avatar style slot {_activeExtendedSlot + 1} could not keep a game outfit change, so the change was not saved anywhere (vanilla slots 1-3 untouched): {ex.GetType().Name}: {ex.Message}");
+            return true;
+        }
+    }
+
+    // Round 4 WS1: slots 4-9 live in a crash-safe store (temp file + atomic replace + three backups) instead of a
+    // BepInEx ConfigFile, whose Save() truncates and rewrites in place. The old .cfg is read once to migrate and
+    // is then left exactly as it is.
+    private static void EnsureSlotStore()
+    {
+        if (_storeLoaded)
         {
             return;
         }
 
-        string path = System.IO.Path.Combine(Paths.ConfigPath, "com.bluesage.ontogether.qol-avatar-styles.cfg");
-        _config = new ConfigFile(path, saveOnInit: true);
-        _selectedExtendedSlot = _config.Bind("State", "SelectedExtendedSlot", -1, "Last selected BlueSage avatar style slot. -1 means a vanilla slot is active.");
+        _storeLoaded = true;
+        _storeWritable = false;
+        _storePath = System.IO.Path.Combine(Paths.ConfigPath, "com.bluesage.ontogether.qol-avatar-styles.store");
+        try
+        {
+            if (AvatarSlotStore.TryLoad(_storePath, ExtendedSlotCount, out int selected, out string recordedHash, out string[] names, out string[] payloads, out string usedFile))
+            {
+                _selectedSlot = selected;
+                Array.Copy(names, SlotNames, ExtendedSlotCount);
+                Array.Copy(payloads, SlotPayloads, ExtendedSlotCount);
+                _legacyConfigHash = recordedHash;
+                _storeWritable = true;
+                bool restoredFromBackup = !string.Equals(usedFile, _storePath, StringComparison.OrdinalIgnoreCase);
+                if (restoredFromBackup)
+                {
+                    Plugin.Log?.LogWarning("Avatar styles 4-9 were restored from the backup " + System.IO.Path.GetFileName(usedFile) + " because the main file was missing or incomplete.");
+                }
+
+                bool reconciled = ReconcileLegacyConfig(usedFile);
+                if (restoredFromBackup || reconciled)
+                {
+                    PersistStore();
+                }
+
+                return;
+            }
+
+            // Store files exist but none could be read (locked or damaged): never migrate or start empty over
+            // them. This session runs read-only so the files stay exactly as they are.
+            if (AvatarSlotStore.AnyFileExists(_storePath))
+            {
+                Plugin.Log?.LogWarning("Avatar styles 4-9 storage exists but could not be read. Slot changes this session are not saved, so the files on disk stay untouched.");
+                return;
+            }
+
+            MigrateFromLegacyConfig();
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log?.LogWarning($"Avatar styles 4-9 storage could not be read: {ex.GetType().Name}. Slot changes this session are not saved, so the files on disk stay untouched.");
+        }
+    }
+
+    private static void MigrateFromLegacyConfig()
+    {
+        for (int index = 0; index < ExtendedSlotCount; index++)
+        {
+            SlotNames[index] = string.Empty;
+            SlotPayloads[index] = string.Empty;
+        }
+
+        if (!TryReadLegacyConfig(out int legacySelected, out string[] legacyNames, out string[] legacyPayloads))
+        {
+            _legacyConfigHash = string.Empty;
+            _storeWritable = true;
+            return;
+        }
+
+        _selectedSlot = legacySelected;
+        Array.Copy(legacyNames, SlotNames, ExtendedSlotCount);
+        Array.Copy(legacyPayloads, SlotPayloads, ExtendedSlotCount);
+        _legacyConfigHash = LegacyConfigReimportPolicy.ContentHash(legacyNames, legacyPayloads);
+
+        // Writable only once the old file was read in full; a read that throws leaves the session read-only.
+        _storeWritable = true;
+        if (PersistStore())
+        {
+            Plugin.Log?.LogInfo("Avatar styles 4-9 moved to crash-safe storage; the old settings file was left untouched.");
+        }
+    }
+
+    // The old .cfg is read with SaveOnConfigSet off, so reading it never rewrites it. False when the file is absent.
+    private static bool TryReadLegacyConfig(out int selectedSlot, out string[] names, out string[] payloads)
+    {
+        selectedSlot = -1;
+        names = new string[ExtendedSlotCount];
+        payloads = new string[ExtendedSlotCount];
+        string legacyPath = System.IO.Path.Combine(Paths.ConfigPath, "com.bluesage.ontogether.qol-avatar-styles.cfg");
+        if (!System.IO.File.Exists(legacyPath))
+        {
+            return false;
+        }
+
+        ConfigFile legacy = new ConfigFile(legacyPath, saveOnInit: false) { SaveOnConfigSet = false };
+        selectedSlot = legacy.Bind("State", "SelectedExtendedSlot", -1, "Last selected BlueSage avatar style slot. -1 means a vanilla slot is active.").Value;
         for (int slot = NativeSlotCount; slot < TotalSlotCount; slot++)
         {
             int index = slot - NativeSlotCount;
-            Names[index] = _config.Bind("Style " + (slot + 1), "Name", string.Empty, "Display name for BlueSage avatar style slot " + (slot + 1) + ".");
-            Payloads[index] = _config.Bind("Style " + (slot + 1), "Payload", string.Empty, "Versioned avatar customization payload. Managed by BlueSage QoL.");
+            names[index] = legacy.Bind("Style " + (slot + 1), "Name", string.Empty, "Display name for BlueSage avatar style slot " + (slot + 1) + ".").Value ?? string.Empty;
+            payloads[index] = legacy.Bind("Style " + (slot + 1), "Payload", string.Empty, "Versioned avatar customization payload. Managed by BlueSage QoL.").Value ?? string.Empty;
+        }
+
+        return true;
+    }
+
+    // Review R2: the frozen .cfg is the 0.2.5 rollback copy. When its content differs from what the store last
+    // imported, the player edited slots under a rollback, and those edits win over the store (after a copy aside).
+    // Returns true when the in-memory state changed and needs a save.
+    private static bool ReconcileLegacyConfig(string loadedFile)
+    {
+        string currentHash = null;
+        int legacySelected = -1;
+        string[] legacyNames = null;
+        string[] legacyPayloads = null;
+        try
+        {
+            if (TryReadLegacyConfig(out legacySelected, out legacyNames, out legacyPayloads))
+            {
+                currentHash = LegacyConfigReimportPolicy.ContentHash(legacyNames, legacyPayloads);
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log?.LogWarning($"Avatar styles 4-9: the old settings file could not be read, so it was not compared with the saved slots this session: {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+
+        bool legacyHasAnyPayload = legacyPayloads != null && LegacyConfigReimportPolicy.HasAnyPayload(legacyPayloads);
+        switch (LegacyConfigReimportPolicy.Decide(_legacyConfigHash, currentHash, legacyHasAnyPayload))
+        {
+            case LegacyConfigAction.Reimport:
+                string copy;
+                try
+                {
+                    copy = AvatarSlotStore.BackupBeforeReimport(_storePath, loadedFile, DateTime.Now);
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log?.LogWarning($"Avatar styles 4-9: the old settings file changed, but the current slots could not be copied aside ({ex.GetType().Name}: {ex.Message}), so it was not re-imported this session. The saved slots are unchanged.");
+                    return false;
+                }
+
+                _selectedSlot = legacySelected;
+                Array.Copy(legacyNames, SlotNames, ExtendedSlotCount);
+                Array.Copy(legacyPayloads, SlotPayloads, ExtendedSlotCount);
+                _legacyConfigHash = currentHash;
+                Plugin.Log?.LogWarning("Avatar styles 4-9 were re-imported from the old settings file because it changed since the last import (edits made under a rollback win). The previous slots were copied to " + System.IO.Path.GetFileName(copy) + ".");
+                return true;
+            case LegacyConfigAction.RecordHash:
+                _legacyConfigHash = currentHash ?? string.Empty;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // True when the store on disk now holds the in-memory slots. The new file replaces the old one only as the
+    // final step (File.Replace), so a failure anywhere before it leaves the saved file exactly as it was.
+    private static bool PersistStore()
+    {
+        if (_storePath == null || !_storeWritable)
+        {
+            return false;
+        }
+
+        // Review R10: inside a batch (one user action such as a slot switch) the save is deferred to the end,
+        // so one action is one file write and one backup rotation.
+        if (_persistBatchDepth > 0)
+        {
+            _persistPending = true;
+            return true;
+        }
+
+        try
+        {
+            AvatarSlotStore.Save(_storePath, _selectedSlot, _legacyConfigHash, SlotNames, SlotPayloads);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log?.LogWarning($"Avatar styles 4-9 could not be saved: {ex.GetType().Name}: {ex.Message}. The saved file was not replaced; this change stays in memory and is written with the next successful save.");
+            return false;
+        }
+    }
+
+    private static void SetSelectedSlot(int slot)
+    {
+        if (_selectedSlot == slot)
+        {
+            return;
+        }
+
+        _selectedSlot = slot;
+        PersistStore();
+    }
+
+    private static void BeginPersistBatch() => _persistBatchDepth++;
+
+    private static void EndPersistBatch()
+    {
+        if (_persistBatchDepth > 0)
+        {
+            _persistBatchDepth--;
+        }
+
+        if (_persistBatchDepth == 0 && _persistPending)
+        {
+            _persistPending = false;
+            PersistStore();
         }
     }
 
@@ -76,7 +361,13 @@ internal static class AvatarStyleSlotsBridge
         }
 
         _lastController = controller;
-        EnsureConfig();
+        EnsureSlotStore();
+        if (AvatarSlotStoreNoticePolicy.ShouldShowReadOnlyNotice(_storeLoaded, _storeWritable, _readOnlyNoticeShown) &&
+            Plugin.AddLocalNotificationWithToast(Plugin.FormatBlueSageWarning("Avatar styles 4-9 are read-only this session: their saved file could not be read, so nothing on disk was changed and slot edits made now will not be kept. Details are in BepInEx/LogOutput.log.")))
+        {
+            _readOnlyNoticeShown = true;
+        }
+
         List<TextMeshProUGUI> nativeTexts = StyleTextsField?.GetValue(controller) as List<TextMeshProUGUI>;
         List<GameObject> nativeBgs = StyleSelectedBgsField?.GetValue(controller) as List<GameObject>;
         GameObject panel = StyleDropdownPanelField?.GetValue(controller) as GameObject;
@@ -132,12 +423,16 @@ internal static class AvatarStyleSlotsBridge
         catch (Exception ex)
         {
             _activeExtendedSlot = -1;
-            if (_selectedExtendedSlot != null)
-            {
-                _selectedExtendedSlot.Value = -1;
-            }
+            SetSelectedSlot(-1);
             Plugin.Log?.LogWarning($"Avatar Styles 4-9 deferred an invalid saved-slot restore without interrupting CustomizationUI startup: {ex.GetType().Name}: {ex.Message}");
         }
+    }
+
+    // Round 5h: called when the player opens the avatar panel (not at scene load, where the rows are built and a toast
+    // would fade unseen). The first time it finds the extra rows in place, one note says they are there.
+    internal static void NotifyAvatarScreenOpened()
+    {
+        Plugin.ShowOutfitSlotsHintOnce(Plugin.EnableExtendedAvatarStyles != null && Plugin.EnableExtendedAvatarStyles.Value ? RowTexts.Count : 0);
     }
 
     internal static void RefreshEnabledState()
@@ -216,6 +511,7 @@ internal static class AvatarStyleSlotsBridge
         }
 
         _activeExtendedSlot = -1;
+        _wornSlotIds = null;
         Plugin.Log?.LogInfo("Avatar preset slots 4-9 disabled; vanilla slots 1-3 restored and QoL preset data retained.");
     }
 
@@ -226,7 +522,8 @@ internal static class AvatarStyleSlotsBridge
             return;
         }
 
-        EnsureConfig();
+        EnsureSlotStore();
+        BeginPersistBatch();
         try
         {
             bool enteringFromNative = !IsExtendedActive;
@@ -241,9 +538,10 @@ internal static class AvatarStyleSlotsBridge
             }
             SetAllSelectionBgs(controller, -1);
             _activeExtendedSlot = slot;
-            _selectedExtendedSlot.Value = slot;
+            SetSelectedSlot(slot);
 
             CustomizationDataIDs3 ids = LoadPayload(slot) ?? new CustomizationDataIDs3();
+            _wornSlotIds = ids;
             ApplyToEditor(controller, ids);
             SetAllSelectionBgs(controller, slot);
             UpdateHeader(controller, slot, GetName(slot));
@@ -252,6 +550,10 @@ internal static class AvatarStyleSlotsBridge
         catch (Exception ex)
         {
             Plugin.Log?.LogWarning($"Avatar style slot {slot + 1} selection failed safely: {ex.GetType().Name}: {ex.Message}");
+        }
+        finally
+        {
+            EndPersistBatch();
         }
     }
 
@@ -262,13 +564,15 @@ internal static class AvatarStyleSlotsBridge
             return false;
         }
 
+        BeginPersistBatch();
         try
         {
             SaveExtended(controller, _activeExtendedSlot);
             RestoreNativeSlotSnapshot();
             SetAllSelectionBgs(controller, -1);
             _activeExtendedSlot = -1;
-            _selectedExtendedSlot.Value = -1;
+            _wornSlotIds = null;
+            SetSelectedSlot(-1);
 
             PlayerDataZip zip = MonoSingleton<DataManager>.I.PlayerDataZip;
             int previousNativeSlot = _nativeSlotSnapshotIndex >= 0
@@ -295,6 +599,10 @@ internal static class AvatarStyleSlotsBridge
         {
             Plugin.Log?.LogWarning($"Returning to vanilla avatar style {slot + 1} failed safely: {ex.GetType().Name}: {ex.Message}");
             return true;
+        }
+        finally
+        {
+            EndPersistBatch();
         }
     }
 
@@ -332,7 +640,7 @@ internal static class AvatarStyleSlotsBridge
             SetGroupUiMethod?.Invoke(controller, null);
 
             MonoSingleton<DataManager>.I.CustomizationData = new CustomizationData(editorData);
-            SaveExtendedData(editorData, _activeExtendedSlot);
+            SaveExtendedData(new CustomizationDataIDs3(editorData), _activeExtendedSlot);
             RestoreNativeSlotSnapshot();
             if (WaitAndCaptureMethod?.Invoke(controller, null) is System.Collections.IEnumerator capture)
             {
@@ -361,9 +669,10 @@ internal static class AvatarStyleSlotsBridge
             return false;
         }
 
-        EnsureConfig();
+        EnsureSlotStore();
         string normalized = styleName ?? string.Empty;
-        Names[_activeExtendedSlot - NativeSlotCount].Value = normalized;
+        SlotNames[_activeExtendedSlot - NativeSlotCount] = normalized;
+        PersistStore();
         if (RowTexts.TryGetValue(_activeExtendedSlot, out TextMeshProUGUI text) && text != null)
         {
             text.text = "- " + normalized;
@@ -374,26 +683,36 @@ internal static class AvatarStyleSlotsBridge
 
     private static void RestoreExtendedSelectionIfNeeded(CustomizationUIController controller, List<GameObject> nativeBgs)
     {
-        int slot = _selectedExtendedSlot?.Value ?? -1;
-        if (slot < NativeSlotCount || slot >= TotalSlotCount || string.IsNullOrWhiteSpace(Payloads[slot - NativeSlotCount].Value))
+        int slot = _selectedSlot;
+        if (slot < NativeSlotCount || slot >= TotalSlotCount || string.IsNullOrWhiteSpace(SlotPayloads[slot - NativeSlotCount]))
         {
             _activeExtendedSlot = -1;
             return;
         }
 
+        CustomizationDataIDs3 ids = LoadPayload(slot);
+        if (ids == null)
+        {
+            // Unreadable payload: keep the vanilla slot worn rather than routing game changes into it.
+            _activeExtendedSlot = -1;
+            SetSelectedSlot(-1);
+            Plugin.Log?.LogWarning($"Avatar style slot {slot + 1} could not be read at startup; your vanilla slot stays on. Slot {slot + 1}'s saved data was left as it is.");
+            return;
+        }
+
+        // Re-wearing a slot 4-9 after a relog: remember the vanilla slot first, exactly as a live
+        // selection does, so returning to slots 1-3 restores it.
+        CaptureNativeSlotSnapshot();
         _activeExtendedSlot = slot;
         foreach (GameObject bg in nativeBgs)
         {
             bg?.SetActive(false);
         }
 
-        CustomizationDataIDs3 ids = LoadPayload(slot);
-        if (ids != null)
-        {
-            ApplyToEditor(controller, ids);
-            SetAllSelectionBgs(controller, slot);
-            UpdateHeader(controller, slot, GetName(slot));
-        }
+        _wornSlotIds = ids;
+        ApplyToEditor(controller, ids);
+        SetAllSelectionBgs(controller, slot);
+        UpdateHeader(controller, slot, GetName(slot));
     }
 
     private static void SaveDepartingSlot(CustomizationUIController controller)
@@ -418,8 +737,16 @@ internal static class AvatarStyleSlotsBridge
             return;
         }
 
-        _nativeSlotSnapshotIndex = Mathf.Clamp(zip.SelectedStyleIndex, 0, NativeSlotCount - 1);
-        _nativeSlotSnapshot = CloneIds(zip.CurrentCustomizationDataIDs);
+        _ownNativeWrite = true;
+        try
+        {
+            _nativeSlotSnapshotIndex = Mathf.Clamp(zip.SelectedStyleIndex, 0, NativeSlotCount - 1);
+            _nativeSlotSnapshot = CloneIds(zip.CurrentCustomizationDataIDs);
+        }
+        finally
+        {
+            _ownNativeWrite = false;
+        }
     }
 
     private static void RestoreNativeSlotSnapshot()
@@ -430,8 +757,16 @@ internal static class AvatarStyleSlotsBridge
             return;
         }
 
-        zip.SelectedStyleIndex = _nativeSlotSnapshotIndex;
-        zip.CurrentCustomizationDataIDs = CloneIds(_nativeSlotSnapshot);
+        _ownNativeWrite = true;
+        try
+        {
+            zip.SelectedStyleIndex = _nativeSlotSnapshotIndex;
+            zip.CurrentCustomizationDataIDs = CloneIds(_nativeSlotSnapshot);
+        }
+        finally
+        {
+            _ownNativeWrite = false;
+        }
     }
 
     private static CustomizationDataIDs3 CloneIds(CustomizationDataIDs3 source)
@@ -447,17 +782,24 @@ internal static class AvatarStyleSlotsBridge
             return;
         }
 
-        SaveExtendedData(data, slot);
+        SaveExtendedData(new CustomizationDataIDs3(data), slot);
     }
 
-    private static void SaveExtendedData(CustomizationData data, int slot)
+    // Review R10: callers hand over one ids object they own; it is serialized once and, when it is the worn
+    // slot, kept as the getter cache without another conversion.
+    private static void SaveExtendedData(CustomizationDataIDs3 ids, int slot)
     {
-        if (data == null || slot < NativeSlotCount || slot >= TotalSlotCount)
+        if (ids == null || slot < NativeSlotCount || slot >= TotalSlotCount)
         {
             return;
         }
 
-        Payloads[slot - NativeSlotCount].Value = Serialize(new CustomizationDataIDs3(data));
+        SlotPayloads[slot - NativeSlotCount] = Serialize(ids);
+        PersistStore();
+        if (slot == _activeExtendedSlot)
+        {
+            _wornSlotIds = ids;
+        }
     }
 
     private static void ApplyToEditor(CustomizationUIController controller, CustomizationDataIDs3 ids)
@@ -508,7 +850,7 @@ internal static class AvatarStyleSlotsBridge
         }
     }
 
-    private static string GetName(int slot) => Names[slot - NativeSlotCount]?.Value ?? string.Empty;
+    private static string GetName(int slot) => SlotNames[slot - NativeSlotCount] ?? string.Empty;
 
     private static void ConfigureRowButton(GameObject row, CustomizationUIController controller, int slot)
     {
@@ -684,7 +1026,7 @@ internal static class AvatarStyleSlotsBridge
     {
         try
         {
-            return Deserialize(Payloads[slot - NativeSlotCount].Value);
+            return Deserialize(SlotPayloads[slot - NativeSlotCount]);
         }
         catch (Exception ex)
         {
@@ -730,6 +1072,26 @@ internal static class AvatarStyleSlotsInitPatch
     private static void Postfix(CustomizationUIController __instance) => AvatarStyleSlotsBridge.ExtendDropdown(__instance);
 }
 
+[HarmonyPatch(typeof(CustomizationUIController), nameof(CustomizationUIController.ButtonOpenCustomizationUI))]
+internal static class AvatarStyleSlotsOpenHintPatch
+{
+    [HarmonyPostfix]
+    private static void Postfix(CustomizationUIController __instance)
+    {
+        try
+        {
+            if (__instance != null && __instance.CustomizationPageType == CustomizationPageType.Avatar)
+            {
+                AvatarStyleSlotsBridge.NotifyAvatarScreenOpened();
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log?.LogWarning($"Extra outfit slots note skipped safely: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+}
+
 [HarmonyPatch(typeof(CustomizationUIController), nameof(CustomizationUIController.ButtonSelectStyle))]
 internal static class AvatarStyleSlotsNativeSelectionPatch
 {
@@ -746,7 +1108,61 @@ internal static class AvatarStyleSlotsClosePatch
     [HarmonyPrefix]
     private static bool Prefix(CustomizationUIController __instance, bool notFromStyleChanged)
     {
+        AvatarStyleSlotsBridge.EnterNativeWriterScope();
         return !AvatarStyleSlotsBridge.SaveExtendedClose(__instance, notFromStyleChanged);
+    }
+
+    [HarmonyFinalizer]
+    private static void Finalizer() => AvatarStyleSlotsBridge.ExitNativeWriterScope();
+}
+
+[HarmonyPatch(typeof(CustomizationUIController), nameof(CustomizationUIController.SetLemonadeHat))]
+internal static class AvatarStyleSlotsLemonadeScopePatch
+{
+    [HarmonyPrefix]
+    private static void Prefix() => AvatarStyleSlotsBridge.EnterNativeWriterScope();
+
+    [HarmonyFinalizer]
+    private static void Finalizer() => AvatarStyleSlotsBridge.ExitNativeWriterScope();
+}
+
+// Round 4 WS1: the two vanilla writes of the current outfit (CloseAvatarPanel, SetLemonadeHat) pass through
+// this setter. While a slot 4-9 is worn and one of them is running, the write lands in that slot instead.
+[HarmonyPatch(typeof(PlayerDataZip), nameof(PlayerDataZip.CurrentCustomizationDataIDs), MethodType.Setter)]
+internal static class AvatarStyleSlotsNativeWriteGuardPatch
+{
+    [HarmonyPrefix]
+    private static bool Prefix(CustomizationDataIDs3 value)
+    {
+        return !AvatarStyleSlotsBridge.TryRedirectNativeWrite(value);
+    }
+}
+
+// Round 4 WS1: the per-frame pet clothing check judges the outfit the player is actually wearing.
+[HarmonyPatch(typeof(PetManager), "CheckClothingRequirements")]
+internal static class AvatarStyleSlotsPetClothingScopePatch
+{
+    [HarmonyPrefix]
+    private static void Prefix() => AvatarStyleSlotsBridge.EnterWornReadScope();
+
+    [HarmonyFinalizer]
+    private static void Finalizer() => AvatarStyleSlotsBridge.ExitWornReadScope();
+}
+
+// Only answers inside that scope; every other read (including the game's save serializer) gets vanilla data.
+[HarmonyPatch(typeof(PlayerDataZip), nameof(PlayerDataZip.CurrentCustomizationDataIDs), MethodType.Getter)]
+internal static class AvatarStyleSlotsNativeReadGuardPatch
+{
+    [HarmonyPrefix]
+    private static bool Prefix(ref CustomizationDataIDs3 __result)
+    {
+        if (AvatarStyleSlotsBridge.TryReadWornSlot(out CustomizationDataIDs3 worn))
+        {
+            __result = worn;
+            return false;
+        }
+
+        return true;
     }
 }
 

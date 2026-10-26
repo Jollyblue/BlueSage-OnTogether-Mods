@@ -172,9 +172,9 @@ internal sealed class BlueSageAchievementObservation
     internal long UtcTicks { get; }
     internal string ObservationLabel => Mode switch
     {
-        WorkRelaxAttributionMode.Work => "Observed during Work",
-        WorkRelaxAttributionMode.Relax => "Observed during Relax",
-        _ => "Observed before Work / Relax tracking"
+        WorkRelaxAttributionMode.Work => "During Work",
+        WorkRelaxAttributionMode.Relax => "During Relax",
+        _ => "Before Work / Relax labels"
     };
 }
 
@@ -279,25 +279,29 @@ internal sealed class BlueSageReportProjection
                 }
                 work.Add(new BlueSageReportMetric(key, workDays.Sum(), unit, "Attributed", workDays));
                 relax.Add(new BlueSageReportMetric(key, relaxDays.Sum(), unit, "Attributed", relaxDays));
-                unclassified.Add(new BlueSageReportMetric(key, unclassifiedDays.Sum(), unit, "Unclassified balance", unclassifiedDays));
+                unclassified.Add(new BlueSageReportMetric(key, unclassifiedDays.Sum(), unit, "not labelled yet", unclassifiedDays));
                 continue;
             }
 
             if (!definition.IsAdditive)
             {
-                work.Add(new BlueSageReportMetric(key, nativeValue, unit, "Overall native", allWeekdays));
-                relax.Add(new BlueSageReportMetric(key, nativeValue, unit, "Overall native", allWeekdays));
-                unclassified.Add(new BlueSageReportMetric(key, nativeValue, unit, "Overall native", allWeekdays));
+                work.Add(new BlueSageReportMetric(key, nativeValue, unit, "whole game, not split", allWeekdays));
+                relax.Add(new BlueSageReportMetric(key, nativeValue, unit, "whole game, not split", allWeekdays));
+                unclassified.Add(new BlueSageReportMetric(key, nativeValue, unit, "whole game, not split", allWeekdays));
                 continue;
             }
 
-            ModeAllocation attributed = effective.TryGetValue(key, out ModeAllocation found) ? found : default;
+            ModeAllocation attributed = definition.IsDerived
+                ? DeriveRecentSplit(nativeValue, eventList, correctionList, definition.DerivedFrom!)
+                : effective.TryGetValue(key, out ModeAllocation found) ? found : default;
             double workValue = Math.Min(nativeValue, Math.Max(0d, attributed.Work));
             double relaxValue = Math.Min(Math.Max(0d, nativeValue - workValue), Math.Max(0d, attributed.Relax));
             double unclassifiedValue = Math.Max(0d, nativeValue - workValue - relaxValue);
-            work.Add(new BlueSageReportMetric(key, workValue, unit, "Attributed"));
-            relax.Add(new BlueSageReportMetric(key, relaxValue, unit, "Attributed"));
-            unclassified.Add(new BlueSageReportMetric(key, unclassifiedValue, unit, "Unclassified balance"));
+            // Round 5d sweep: Today/Week/Month say where their split comes from.
+            string qualifier = definition.IsDerived ? "From your totals" : "Attributed";
+            work.Add(new BlueSageReportMetric(key, workValue, unit, qualifier));
+            relax.Add(new BlueSageReportMetric(key, relaxValue, unit, qualifier));
+            unclassified.Add(new BlueSageReportMetric(key, unclassifiedValue, unit, "not labelled yet"));
         }
 
         return new BlueSageReportProjection(
@@ -306,6 +310,42 @@ internal sealed class BlueSageReportProjection
             View(BlueSageReportFilter.Relax, relax, moodList, achievementList, achievementSummary, reportReferenceUtc),
             View(BlueSageReportFilter.Unclassified, unclassified, moodList, achievementList, achievementSummary, reportReferenceUtc),
             BuildHistory(eventList, correctionList));
+    }
+
+    // Round 5d (advisor-cleared): Today/Week/Month are the newest part of their lifetime Total, so their split is the
+    // newest Total rows, newest first, until the game's own value is reached. Each row counts in its mode after
+    // corrections (row corrections move whole rows); the row at the edge counts only the part still needed; anything
+    // the rows do not cover is Unclassified. Aggregate allocations (no row target) shape the lifetime Total only and
+    // are not applied here. No clock or calendar rule: the game's counter decides how far back to look.
+    internal static ModeAllocation DeriveRecentSplit(double nativeValue, IEnumerable<WorkRelaxLedgerEvent> events,
+        IEnumerable<WorkRelaxLedgerEvent> corrections, string sourceKey)
+    {
+        double remaining = Math.Max(0d, nativeValue);
+        if (remaining <= 0d)
+        {
+            return default;
+        }
+
+        WorkRelaxLedgerEvent[] correctionList = corrections
+            .Where(item => string.Equals(item.MetricKey, sourceKey, StringComparison.Ordinal) && item.TargetEventId != null)
+            .ToArray();
+        ModeAllocation split = default;
+        foreach (WorkRelaxLedgerEvent item in events
+                     .Where(item => item.Amount > 0d && string.Equals(item.MetricKey, sourceKey, StringComparison.Ordinal))
+                     .OrderByDescending(item => item.UtcTicks))
+        {
+            if (remaining <= 0d)
+            {
+                break;
+            }
+
+            double take = Math.Min(item.Amount, remaining);
+            WorkRelaxAttributionMode mode = correctionList.Length == 0 ? ParseMode(item.Mode) : ResolveEffectiveEvent(item, correctionList).Mode;
+            split = Add(split, mode, take);
+            remaining -= take;
+        }
+
+        return Add(split, WorkRelaxAttributionMode.Unclassified, remaining);
     }
 
     internal static ModeAllocation EffectiveBalance(string metricKey,
@@ -444,7 +484,7 @@ internal sealed class BlueSageReportProjection
         WorkRelaxMetricUnit.Seconds => "seconds",
         WorkRelaxMetricUnit.Minutes => "minutes",
         WorkRelaxMetricUnit.WeekdayCounts => "sessions by weekday",
-        WorkRelaxMetricUnit.Marker => "native marker",
+        WorkRelaxMetricUnit.Marker => "game counter",
         _ => "count"
     };
 }
@@ -560,7 +600,7 @@ internal static class BlueSageAggregateCorrectionPolicy
             .Where(item => item.Mode == WorkRelaxAttributionMode.Unclassified)
             .OrderBy(item => item.Primary.UtcTicks).ToArray();
         if (eligible.Sum(item => item.Primary.Amount) < amount)
-            throw new InvalidOperationException("No eligible Unclassified mood observations are available for that amount.");
+            throw new InvalidOperationException("There aren't that many unlabelled Journal check-ins to move.");
         double remaining = amount;
         var members = new List<BlueSageReportHistoryMember>();
         foreach (BlueSageEffectiveEvent item in eligible)
@@ -574,7 +614,7 @@ internal static class BlueSageAggregateCorrectionPolicy
         BlueSageReportCorrectionBatch batch = BlueSageReportCorrectionBatchPolicy.Reclassify(
             members, target, events, correctionList);
         if (batch.Corrections.Count == 0)
-            throw new InvalidOperationException("No eligible Unclassified mood observations were changed.");
+            throw new InvalidOperationException("No Journal check-ins were moved.");
         return batch;
     }
 }
@@ -620,6 +660,9 @@ internal static class WorkRelaxUndoHistoryPolicy
         return items.Where(item => (item.Source ?? string.Empty).StartsWith("Move:", StringComparison.Ordinal))
             .GroupBy(item => string.IsNullOrWhiteSpace(item.BatchId) ? item.EventId : item.BatchId!, StringComparer.Ordinal)
             .Where(group => !undone.Contains(group.Key))
+            // Round 5d review: a batch that only moved Today/Week/Month numbers no longer changes anything (they are
+            // worked out from the totals), and undoing it would fail on rows that are gone and block every older undo.
+            .Where(group => !group.All(item => WorkRelaxMetricCatalog.IsDerived(item.MetricKey)))
             .OrderByDescending(group => group.Max(item => item.UtcTicks))
             .Select(group => (IReadOnlyList<WorkRelaxLedgerEvent>)group.ToArray())
             .FirstOrDefault();
@@ -728,7 +771,7 @@ internal static class BlueSageAllocationCatalog
     private static IReadOnlyList<BlueSageAllocationOption> Build()
     {
         IEnumerable<WorkRelaxMetricDefinition> definitions = WorkRelaxMetricCatalog.NativeMetrics
-            .Where(item => item.IsAdditive).Concat(WorkRelaxMetricCatalog.WeekdayBucketMetrics);
+            .Where(item => item.IsAdditive && !item.IsDerived).Concat(WorkRelaxMetricCatalog.WeekdayBucketMetrics);
         var result = definitions.Select(item => new BlueSageAllocationOption(item.Key,
                 BlueSageMetricPresentation.FriendlyLabel(item.Key) + " (" + BlueSageMetricPresentation.UnitLabel(item.Key) + ")"))
             .ToList();
@@ -745,21 +788,22 @@ internal static class BlueSageReportSurfacePolicy
     internal static IReadOnlyList<string> SectionOrder { get; } =
         Array.AsReadOnly(new[] { "Overview", "Activity Snapshot", "Detailed Analysis", "Journal Mood Check-ins", "Achievements", "Classification History" });
     internal const string QolFallbackLabel = "Open BlueSage Report";
-    internal const string FailOpenDiagnostic = "BlueSage Report disabled: exact native Report anchors are incomplete; native Report remains unchanged.";
-    internal const string LifecycleFailOpenDiagnostic = "BlueSage Report disabled: OpenStatisticsPanel lifecycle target is unavailable; native Report remains unchanged.";
+    // Log-only (WorkRelaxRuntimeController.LogOnce): the plain sentence first, the troubleshooting detail after it.
+    internal const string FailOpenDiagnostic = "BlueSage Report is off for this game version; the game's Report still works. (Report screen parts not found.)";
+    internal const string LifecycleFailOpenDiagnostic = "BlueSage Report is off for this game version; the game's Report still works. (OpenStatisticsPanel not found.)";
 }
 
 internal sealed class BlueSageReportStatusPresenter
 {
-    private const string InitialStatus = "Refresh to read the current native statistics.";
-    private const string RefreshSuccess = "Refreshed from native statistics. Vanilla data was not changed.";
+    private const string InitialStatus = "Press Refresh to load your stats.";
+    private const string RefreshSuccess = "Up to date. Your game stats were not changed.";
     private bool _actionResultPending;
 
     internal string Text { get; private set; } = InitialStatus;
 
     internal void BeginProjectionRefresh()
     {
-        if (!_actionResultPending) Text = "Refreshing Journal, achievements, and native statistics without blocking the report...";
+        if (!_actionResultPending) Text = "Loading your Journal, achievements and game stats...";
     }
 
     internal void ShowActionResult(string? result)

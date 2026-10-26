@@ -8,7 +8,7 @@ public sealed class VoiceWelcomePolicyTests
     [TestCase(false, true, false, "Voice chat is Off")]
     [TestCase(true, false, true, "Lobby voice is Off")]
     [TestCase(true, true, true, "Push to Talk is enabled")]
-    [TestCase(true, true, false, "Voice Activation is enabled")]
+    [TestCase(true, true, false, "Heads up: your mic may be on (Voice Activation). Check Settings > Audio.")]
     public void Guidance_reports_the_selected_game_setting(bool voiceChat, bool lobbyVoice, bool pushToTalk, string expected)
     {
         string result = VoiceWelcomePolicy.Build(voiceChat, lobbyVoice, pushToTalk);

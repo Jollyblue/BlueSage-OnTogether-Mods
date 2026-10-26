@@ -48,13 +48,13 @@ public sealed partial class Plugin : BaseUnityPlugin
 
     public const string PluginGuid = "com.bluesage.ontogether.qoltweaks.beta";
     public const string PluginName = "BlueSage QoL Tweaks - Beta";
-    public const string PluginVersion = "0.2.5";
-    public const string PluginDisplayVersion = "0.2.5";
-    public const string PluginReleaseDate = "2026-10-18";
+    public const string PluginVersion = "0.2.7";
+    public const string PluginDisplayVersion = "0.2.7";
+    public const string PluginReleaseDate = "2026-10-25";
 #if MODDERBRANCH_UAT
-    internal const string PluginBuildIdentity = "0.2.5+20261018.uat-round3f-final-polish-uat";
+    internal const string PluginBuildIdentity = "0.2.7+20261025.round5h-rc7-uat";
 #else
-    internal const string PluginBuildIdentity = "0.2.5+20261018.uat-round3f-final-polish";
+    internal const string PluginBuildIdentity = "0.2.7+20261025.round5h-rc7";
 #endif
     private const string StyleStateMigrationTarget = PluginVersion + "-legacy-style-repair-v1";
 
@@ -69,7 +69,6 @@ public sealed partial class Plugin : BaseUnityPlugin
     private Coroutine _hostHealthCoroutine;
     private Coroutine _communityBanListCoroutine;
     private Coroutine _managedReconnectCoroutine;
-    private Coroutine _lastLobbyRejoinFallbackCoroutine;
     private Coroutine _replacementLobbyDiscoveryCoroutine;
     private Coroutine _cleanMenuReconnectCoroutine;
     private Coroutine _reconnectAnnouncementCoroutine;
@@ -94,8 +93,11 @@ public sealed partial class Plugin : BaseUnityPlugin
     private bool _cleanMenuReconnectActive;
     private int _cleanMenuReconnectGeneration;
     private string _cleanMenuReconnectPhase = "idle";
+    private string _reconnectBudgetLobbyCode = string.Empty;
+    private int _reconnectBudgetGenerationsUsed;
+    private float _reconnectBudgetIdleSince = -1f;
     private float _hostHealthStartedAt = -1f;
-    private HostHealthDecision _lastHostHealthDecision;
+    private string _lastHostHealthLogKey;
     private GameObject _mentionPingControllerObject;
     private GameObject _commandTypeaheadControllerObject;
     private GameObject _chatReadabilityControllerObject;
@@ -118,6 +120,7 @@ public sealed partial class Plugin : BaseUnityPlugin
     private GUIStyle _toastStyle;
     private string _welcomeOverlayOfferedVisitKey = string.Empty;
     private bool _welcomeOverlayVisible;
+    private bool _otherQolModNoticeShown;
     private GUIStyle _welcomeOverlayBoxStyle;
     private GUIStyle _welcomeOverlayBodyStyle;
     private GUIStyle _welcomeOverlayTitleStyle;
@@ -152,6 +155,15 @@ public sealed partial class Plugin : BaseUnityPlugin
     private bool _welcomeContextShownForLobby;
     private string _welcomeVoiceStateLogKey = string.Empty;
     private string _welcomeLobbyKey = string.Empty;
+    // Voice pass (2026-10-23) NOISE 1/2: quiet reconnect returns and a once-per-session Tip line.
+    private bool _welcomeTipShownThisSession;
+    private static string _quietTrackedVisitKey = string.Empty;
+    private static bool _quietTrackedVisitIsReconnectReturn;
+    private static bool _quietTrackedVisitDecided;
+    private static string _lastVisitLobbyId = string.Empty;
+    private static string _reconnectReturnTargetLobbyId = string.Empty;
+    private static string _reconnectReturnLobbyIdBeforeDrop = string.Empty;
+    private static string _reconnectReturnNotedVisitKey = string.Empty;
     private string _lastStatusBeforePreset = string.Empty;
     private PendingModerationAction _pendingModerationAction;
     private float _nextModerationCapabilityPublishAt;
@@ -192,6 +204,8 @@ public sealed partial class Plugin : BaseUnityPlugin
     internal static int LockedChatFontSizePercent => ChatFontSizePolicy.ClampFontSizePercent(ChatFontSizePercent?.Value ?? ChatFontSizePolicy.DefaultFontSizePercent);
     internal static int LockedChatWindowHeightPercent => ChatWindowHeightPolicy.ClampHeightPercent(ChatWindowHeightPercent?.Value ?? ChatWindowHeightPolicy.DefaultHeightPercent);
     internal static int LockedChatHistoryRows => ChatHistoryLimitPolicy.ClampRows(ChatHistoryRows?.Value ?? ChatHistoryLimitPolicy.DefaultRows);
+    internal static float LockedLocalChatRangeMeters => LocalChatRangePolicy.ClampMeters(LocalChatRangeMeters?.Value ?? LocalChatRangePolicy.DefaultMeters);
+    internal static float LocalChatRangeSquaredMeters => LocalChatRangePolicy.ResolveSquaredMeters(LockedLocalChatRangeMeters);
     internal static int LockedPlayerRenderSaverRadiusMeters => PlayerRenderSaverPolicy.ClampRadiusMeters(PlayerRenderSaverRadiusMeters?.Value ?? PlayerRenderSaverPolicy.DefaultRadiusMeters);
     internal static int LockedPlayerRenderSaverMaxVisiblePlayers => PlayerRenderSaverPolicy.ClampMaxVisiblePlayers(PlayerRenderSaverMaxVisiblePlayers?.Value ?? PlayerRenderSaverPolicy.DefaultMaxVisiblePlayers);
     internal static float LockedSelfSpeedMultiplier => SelfMovementPolicy.ClampSpeed(SelfSpeedMultiplier?.Value ?? SelfMovementPolicy.DefaultMultiplier);
@@ -214,8 +228,22 @@ public sealed partial class Plugin : BaseUnityPlugin
     internal const int LockedReconnectReadyStabilitySeconds = 2;
     internal const int LockedReconnectCleanupTimeoutSeconds = 10;
     internal const int LockedReconnectJoinValidationTimeoutSeconds = 45;
+    // Round 5b (2026-10-23): guarded rejoins per saved lobby; a playable reconnect or a different lobby resets it.
+    internal const int LockedReconnectMaxGenerationsPerLobby = 5;
+    internal const int LockedReconnectBudgetIdleResetSeconds = 120;
+    // The log readout tool counts "Steam dropped your lobby"; keep that phrase in the host notice.
+    internal const string ReconnectBudgetSpentNotice = "BlueSage tried to reconnect 5 times, so it's resting now. You can rejoin from the menu when the host is back.";
+    internal const string HostLobbyLostNotice = "Steam dropped your lobby, so new players can't join and host tools are locked. Host again when you're ready.";
     internal const bool LockedReconnectShowNotifications = true;
-    internal const string LockedReconnectAnnouncementMessage = "Auto Reconnected by Blues - BlueSage QoL Tweaks Mod";
+    internal const string LockedReconnectAnnouncementMessage = "I'm back after a connection hiccup (BlueSage QoL).";
+    // Voice pass (2026-10-23): what Reconnect Guard tells the player, in order of the journey.
+    internal const string ReconnectStartingNotice = "Connection dropped. BlueSage is getting you back in…";
+    internal const string ReconnectJoiningNotice = "Reconnecting to your lobby now.";
+    internal const string ReconnectIncompleteNotice = "That reconnect didn't finish. BlueSage is stepping back to the menu.";
+    internal const string ReconnectStoppedNotice = "Reconnect stopped. You can rejoin from the menu whenever you're ready.";
+    internal const string ReconnectLobbyNotFoundNotice = "BlueSage couldn't find your lobby again, so you're back at the menu. You can rejoin from there.";
+    internal const string ReconnectSearchingNotice = "Looking for your host's new lobby…";
+    internal const string ReconnectFoundNewLobbyNotice = "Found your host's new lobby. Reconnecting.";
     internal const int LockedReconnectAnnouncementDelaySeconds = 3;
 
     internal static ConfigEntry<bool> EnableAutoSweep { get; private set; }
@@ -253,6 +281,7 @@ public sealed partial class Plugin : BaseUnityPlugin
     internal static ConfigEntry<int> ChatFontSizePercent { get; private set; }
     internal static ConfigEntry<int> ChatWindowHeightPercent { get; private set; }
     internal static ConfigEntry<int> ChatHistoryRows { get; private set; }
+    internal static ConfigEntry<float> LocalChatRangeMeters { get; private set; }
     internal static ConfigEntry<string> ChatOutlineColor { get; private set; }
     internal static ConfigEntry<string> BlackChatOutlineColor { get; private set; }
     internal static ConfigEntry<bool> BlackNamesOutline { get; private set; }
@@ -305,7 +334,6 @@ public sealed partial class Plugin : BaseUnityPlugin
     internal static ConfigEntry<float> PerformanceOverlayWidth { get; private set; }
     internal static ConfigEntry<int> PlayerRenderSaverRadiusMeters { get; private set; }
     internal static ConfigEntry<int> PlayerRenderSaverMaxVisiblePlayers { get; private set; }
-    internal static ConfigEntry<bool> EnableHiddenDiagnostics { get; private set; }
     internal static ConfigEntry<bool> EnableLocalAuditExports { get; private set; }
     internal static ConfigEntry<bool> EnablePingMentions { get; private set; }
     internal static ConfigEntry<bool> EnablePingSound { get; private set; }
@@ -325,6 +353,7 @@ public sealed partial class Plugin : BaseUnityPlugin
     internal static ConfigEntry<bool> EnableChatUrlLinks { get; private set; }
     internal static ConfigEntry<bool> EnableStyleUi { get; private set; }
     internal static ConfigEntry<bool> EnableExtendedAvatarStyles { get; private set; }
+    internal static ConfigEntry<bool> OutfitSlotsHintShown { get; private set; }
     internal static ConfigEntry<bool> EnableChalkboardPersistence { get; private set; }
     internal static ConfigEntry<bool> EnableMiniMapPlayerLabels { get; private set; }
     internal static ConfigEntry<bool> EnableMiniMapFriendColors { get; private set; }
@@ -386,8 +415,6 @@ public sealed partial class Plugin : BaseUnityPlugin
     internal static bool ShouldApplyChatUrlLinks => EnableChatUrlLinks != null && EnableChatUrlLinks.Value;
     internal static bool ShouldApplyMiniMapPlayerLabels => EnableMiniMapPlayerLabels != null && EnableMiniMapPlayerLabels.Value;
     internal static bool ShouldApplyMiniMapFriendColors => EnableMiniMapFriendColors != null && EnableMiniMapFriendColors.Value;
-    internal static bool ShouldEmitHiddenDiagnostics =>
-        EnableHiddenDiagnostics != null && EnableHiddenDiagnostics.Value;
 
     private static NativeAssetSweepOwnershipState DetectNativeAssetSweepOwnership()
     {
@@ -477,6 +504,8 @@ public sealed partial class Plugin : BaseUnityPlugin
     {
         Instance = this;
         Log = Logger;
+        // Round 5 Stage S: our own warnings and errors are counted for the session summary line.
+        Log.LogEvent += SessionSummaryController.OnLogEvent;
         // BepInEx writes the config file on first save, so no file now means a fresh install.
         _configFileExistedAtStartup = File.Exists(Config.ConfigFilePath);
 #if MODDERBRANCH_UAT
@@ -500,6 +529,7 @@ public sealed partial class Plugin : BaseUnityPlugin
         }
 #endif
         ApplyOneTimeConfigMigration();
+        InitializeModSuiteFolder();
         ApplyStyleStateMigration();
         SyncNotificationTimestampsWithChatTimestamps("startup config normalization");
         RegisterBlueSageCommands();
@@ -531,6 +561,36 @@ public sealed partial class Plugin : BaseUnityPlugin
         _compatibilityRefreshCoroutine = StartCoroutine(RefreshCompatibilityAfterLoadSettles());
         StartWelcomeMessageLoop();
         Log.LogInfo($"{PluginName} {PluginVersion} loaded. Build={PluginBuildIdentity}, NativeAssetSweep={NativeAssetSweepDetected}, AutoSweep={AutoSweepAllowed}, ChatTweaksAllowed={ChatTweaksAllowed}.");
+    }
+
+    // Round 5d: one BlueSageQoLModSuite folder. Runs before any tracker, journal or audit writer starts.
+    internal const string FolderTidiedNotice = "BlueSage tidied its files into one folder: BepInEx/BlueSageQoLModSuite.";
+    internal const string FolderTidyRetryNotice = "BlueSage couldn't tidy its files this time. Nothing was changed; it will try again next time you start the game.";
+
+    private void InitializeModSuiteFolder()
+    {
+        try
+        {
+            System.Diagnostics.Stopwatch timer = System.Diagnostics.Stopwatch.StartNew();
+            ModSuiteMigrationResult result = ModSuitePaths.InitializeAtStartup(message => Log.LogWarning(message));
+            Log.LogInfo("[BlueSageFiles] " + result.Summary + "; folder=BepInEx/" + ModSuiteLayoutPolicy.RootFolderName + (result.LayoutReady ? string.Empty : " (old places in use this session)") + "; ms=" + timer.ElapsedMilliseconds + ".");
+            string notice = result.MovedOldFiles ? FolderTidiedNotice : result.LayoutReady ? null : FolderTidyRetryNotice;
+            if (notice != null)
+            {
+                StartCoroutine(ShowToastAfterLoad(notice));
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning("[BlueSageFiles] folder check skipped safely: " + ex.GetType().Name + ": " + ex.Message);
+        }
+    }
+
+    // A toast queued during loading would fade before the player sees the menu.
+    private IEnumerator ShowToastAfterLoad(string notice)
+    {
+        yield return new WaitForSecondsRealtime(20f);
+        ShowToast(notice);
     }
 
 #if MODDERBRANCH_UAT
@@ -749,6 +809,7 @@ public sealed partial class Plugin : BaseUnityPlugin
         {
             _nextModerationCapabilityPublishAt = Time.unscaledTime + 5f;
             SteamIdModerationController.PublishHostCapability();
+            SteamIdModerationController.RefreshLobbyDataIfNotMember();
             bool hasLobbySafetyAccess = CanUseLobbySafety(out _);
             bool accessChanged = _hadLobbySafetyAccess != hasLobbySafetyAccess;
             if (_hadLobbySafetyAccess && !hasLobbySafetyAccess)
@@ -760,14 +821,27 @@ public sealed partial class Plugin : BaseUnityPlugin
             {
                 PlayerIdentityEvidenceController.InvalidateRosterCache();
                 Patches.PlayerIdentityRoleHighlightController.RefreshAll();
+                // Round 5h: being made (or no longer being) a Helper is worth a quiet note, not silence.
+                if (hasLobbySafetyAccess &&
+                    SteamIdModerationController.GetLocalAccessState(out _, out _) == LobbySafetyAccessState.HelperReady)
+                {
+                    // No "off" toast: leaving a lobby also lands here, and a note at the main menu would be noise.
+                    ShowToast("Helper tools are on for you in this lobby.");
+                }
             }
         }
 
         SteamIdModerationController.PollHostMemberDataRequests();
+        SteamIdModerationController.TickPendingKicks();
         CloneIncidentActionController.PollHostMemberDataRequests();
         ChalkboardPersistenceController.PollHostMemberDataRequests();
         IdentityResyncController.Tick();
-
+        // Round 4 Stage G: Work / Relax initializes from here (never from a game hook, so the one-time ledger load
+        // lands on an ordinary frame) and writes on a later frame than the one that changed it, off-thread.
+        WorkRelaxRuntimeController.TryInitializeIfDue(DateTime.UtcNow.Ticks);
+        WorkRelaxRuntimeController.FlushIfDue(DateTime.UtcNow.Ticks);
+        // Round 5 Stage S: one summary line every 6 hours (cheap when not due).
+        SessionSummaryController.Tick(DateTime.UtcNow.Ticks);
     }
 
     private void ToggleQolMenuFromHotkey()
@@ -791,8 +865,7 @@ public sealed partial class Plugin : BaseUnityPlugin
         }
 
         _qolMenuWindow.ToggleVisible();
-        // Toast only, no chat line, so menu toggles don't spam the chat log (Blue, final review 2026-10-18).
-        ShowToast(_qolMenuWindow.IsVisible ? "QoL menu opened." : "QoL menu closed.");
+        // Voice pass (2026-10-23): no toast and no chat line; the menu itself appearing or closing is the answer.
         Log?.LogInfo($"QoL menu toggled via {via}.");
     }
 
@@ -815,14 +888,14 @@ public sealed partial class Plugin : BaseUnityPlugin
     // same windows as the hotkeys, with the same toast, for players who prefer clicking.
     internal void ToggleQolMenuFromOverlayButton()
     {
-        ToggleQolMenuWindow("the overlay's QoL-Menu button");
+        ToggleQolMenuWindow("the overlay's QoL Menu button");
     }
 
     internal void ToggleStyleUiFromOverlayButton()
     {
         string result = ToggleStyleUiFromQolMenu();
         ShowToast(result);
-        Log?.LogInfo("Style Helper toggled via the overlay's Styler-Menu button. " + result);
+        Log?.LogInfo("Style Helper toggled via the overlay's Style Helper button. " + result);
     }
 
     internal void ShowToast(string text)
@@ -838,7 +911,7 @@ public sealed partial class Plugin : BaseUnityPlugin
     // Host announcements have their own toggle, so they bypass the general Toast Pop-ups switch.
     private void ShowToastUnchecked(string text, bool pinned)
     {
-        if (string.IsNullOrWhiteSpace(text) || ToastPolicy.IsDuplicateOfVisible(text, _toasts, Time.unscaledTime))
+        if (string.IsNullOrWhiteSpace(text) || ToastPolicy.IsDuplicateOfVisible(text, _toasts, Time.unscaledTime, LockedToastHoldSeconds))
         {
             return;
         }
@@ -916,6 +989,8 @@ public sealed partial class Plugin : BaseUnityPlugin
             totalHeight += Mathf.Max(ToastMinHeight * ToastScale, _toastStyle.CalcHeight(new GUIContent(_toasts[i].Text), ToastWidth)) + ToastSpacing;
         }
 
+        // Round 5g: the window is created on every IMGUI event. Round 5d created it on Repaint only (for click-through)
+        // and nothing was ever painted in the game: Unity builds its window list in the Layout pass.
         var stackRect = new Rect((Screen.width - ToastWidth) / 2f, 24f, ToastWidth, totalHeight);
         GUI.Window(ToastWindowId, stackRect, _toastWindowFunction ??= DrawToastWindowContents, GUIContent.none, GUIStyle.none);
         GUI.BringWindowToFront(ToastWindowId);
@@ -1033,7 +1108,7 @@ public sealed partial class Plugin : BaseUnityPlugin
             Config.Save();
         }
 
-        AddLocalNotificationWithToast("Welcome pop-up turned off. Turn Welcome Overlay back on in Toggles, or type /welcome to open it any time.");
+        AddLocalNotificationWithToast("Welcome Overlay off. Turn it back on in Toggles, or type /welcome any time.");
     }
 
     // "Got it" and Escape close the pop-up for this visit only; nothing is saved (it shows on every join).
@@ -1134,7 +1209,10 @@ public sealed partial class Plugin : BaseUnityPlugin
         string text = string.Join(" ", context.Tokens).Trim();
         if (text.Length == 0)
         {
-            return BlueSageCommandResult.HandledWithMessages("MOTD: \"" + LobbyMotdPolicy.Effective(HostMotd?.Value) + "\". Change it with /motd <text>; /motd clear uses the default.");
+            string current = LobbyMotdPolicy.Effective(HostMotd?.Value);
+            bool isDefault = LobbyAnnouncementPolicy.Sanitize(HostMotd?.Value).Length == 0;
+            return BlueSageCommandResult.HandledWithMessages(
+                "Welcome message: '" + current + "'" + (isDefault ? " (default)" : string.Empty) + ". Change it with /motd <text>" + (isDefault ? "." : ", or /motd clear for the default."));
         }
 
         HostMotd.Value = string.Equals(text, "clear", StringComparison.OrdinalIgnoreCase)
@@ -1143,8 +1221,8 @@ public sealed partial class Plugin : BaseUnityPlugin
         Config.Save();
         SteamIdModerationController.PublishHostCapability();
         string effective = LobbyMotdPolicy.Effective(HostMotd.Value);
-        ShowToast("MOTD saved: " + effective);
-        return BlueSageCommandResult.HandledWithMessages("MOTD saved: \"" + effective + "\". QoL players see it when they join a lobby you host.");
+        ShowToast("Welcome message saved: '" + effective + "'.");
+        return BlueSageCommandResult.HandledWithMessages("Welcome message saved: '" + effective + "'. QoL players see it when they join your lobby.");
     }
 
     private BlueSageCommandResult HandleWelcomeOverlayCommand(BlueSageCommandContext context)
@@ -1262,7 +1340,7 @@ public sealed partial class Plugin : BaseUnityPlugin
             case HotkeyBindTarget.NoclipFly:
                 return "Noclip/Fly";
             case HotkeyBindTarget.ManualSweep:
-                return "Manual Sweep";
+                return "Run Cleanup";
             default:
                 return "Unknown";
         }
@@ -1312,11 +1390,11 @@ public sealed partial class Plugin : BaseUnityPlugin
 
     private static string BuildHotkeyStatusMessage()
     {
-        return "Rebind: qolmenu=" + QolMenuKey.Value +
-               ", stylemenu=" + StyleMenuKey.Value +
-               ", fly=" + NoclipFlyKey.Value +
-               ", sweep=" + ManualSweepKey.Value +
-               ". Use /rebind <target> [key|cancel].";
+        return "Your keys: QoL menu " + QolMenuKey.Value +
+               ", Style Helper " + StyleMenuKey.Value +
+               ", Fly " + NoclipFlyKey.Value +
+               ", Cleanup " + ManualSweepKey.Value +
+               ". Change one with /rebind <name> (names: qolmenu, stylemenu, fly, sweep for Cleanup).";
     }
 
     private BlueSageCommandResult HandleRebindCommand(BlueSageCommandContext context)
@@ -1334,7 +1412,7 @@ public sealed partial class Plugin : BaseUnityPlugin
 
         if (!TryParseHotkeyTargetToken(targetToken, out HotkeyBindTarget target))
         {
-            return BlueSageCommandResult.HandledWithMessages("Rebind: use qolmenu, stylemenu, fly, sweep, or reset.");
+            return BlueSageCommandResult.HandledWithMessages("Rebind: use qolmenu, stylemenu, fly, sweep (Cleanup), or reset.");
         }
 
         if (context.Tokens.Count == 1)
@@ -1479,7 +1557,7 @@ public sealed partial class Plugin : BaseUnityPlugin
         }
 
         Config.Save();
-        return "All BlueSage hotkeys reset to their defaults: QoL Menu=Home, Style Helper=Insert, Noclip/Fly=End, Manual Sweep=F8.";
+        return "All BlueSage keys are back to their defaults: QoL menu Home, Style Helper Insert, Fly End, Cleanup F8.";
     }
 
     private void OnApplicationQuit()
@@ -1537,6 +1615,8 @@ public sealed partial class Plugin : BaseUnityPlugin
 
     private void RunLocalShutdownCleanup()
     {
+        // Round 5 Stage S: the session summary line goes out before anything else is torn down.
+        SessionSummaryController.OnShutdown("quit");
         SessionRunMarkerController.MarkCleanClose();
         if (_rescueReceiverCapabilityCoroutine != null)
         {
@@ -1567,12 +1647,6 @@ public sealed partial class Plugin : BaseUnityPlugin
         {
             StopCoroutine(_managedReconnectCoroutine);
             _managedReconnectCoroutine = null;
-        }
-
-        if (_lastLobbyRejoinFallbackCoroutine != null)
-        {
-            StopCoroutine(_lastLobbyRejoinFallbackCoroutine);
-            _lastLobbyRejoinFallbackCoroutine = null;
         }
 
         if (_replacementLobbyDiscoveryCoroutine != null)
@@ -1703,20 +1777,20 @@ public sealed partial class Plugin : BaseUnityPlugin
     private void BindConfig()
     {
         PublicFirstRunDefaults publicDefaults = PublicFirstRunDefaults.Current;
-        EnableAutoSweep = Config.Bind("Asset Sweep", "EnableAutoSweep", publicDefaults.AutomaticCleanup, "Run BlueSage Automatic Cleanup on its own coordinated 15-minute default timer. Existing saved off choices remain off; manual cleanup remains available.");
+        EnableAutoSweep = Config.Bind("Asset Sweep", "EnableAutoSweep", publicDefaults.AutomaticCleanup, "Run BlueSage Automatic Cleanup on its own timer (40 minutes by default, never right before or after the game's autosave). Existing saved off choices remain off; manual cleanup remains available.");
         AutoDisableSweepWhenAndrewSweepInstalled = Config.Bind("Asset Sweep", "AutoDisableSweepWhenAndrewSweepInstalled", true, "Disable BlueSage auto sweep if AndrewLin Sweep is installed. On by default to avoid double sweeping.");
         AllowManualSweepWhenAndrewSweepInstalled = Config.Bind("Asset Sweep", "AllowManualSweepWhenAndrewSweepInstalled", publicDefaults.ManualCleanupWithOverlappingSweepMod, "Keep BlueSage manual cleanup separate when another cleanup mod is installed. Off by default avoids two cleanup tools acting at once.");
         SweepIntervalMinutes = Config.Bind("Asset Sweep", "SweepIntervalMinutes", SweepSettingsPolicy.DefaultIntervalMinutes, "Minutes between BlueSage automatic cleanups. Safe range 5 to 180. Used only when BlueSage Automatic Cleanup is explicitly enabled; the game native interval is never changed.");
-        NotifyOnSweep = Config.Bind("Asset Sweep", "NotifyOnSweep", true, "Show an in-game notification when BlueSage runs a sweep.");
+        NotifyOnSweep = Config.Bind("Asset Sweep", "NotifyOnSweep", false, "Show an in-game notification when BlueSage runs an automatic cleanup. Off by default since 0.2.7 (a toast every 40 minutes is noise in a cozy session); a cleanup you trigger yourself always confirms.");
         ForceManagedGcCollect = Config.Bind("Asset Sweep", "ForceManagedGcCollect", false, "Also run GC.Collect after a BlueSage-coordinated cleanup. Off by default for smoother play.");
         EnableManualSweepHotkey = Config.Bind("Asset Sweep", "EnableManualSweepHotkey", true, "Deprecated compatibility key retained so existing configs still load. ManualSweepKey always remains active; menu and slash-command cleanup remain available.");
-        ManualSweepKey = Config.Bind("Asset Sweep", "ManualSweepKey", KeyCode.F8, "Hotkey for manual sweep.");
+        ManualSweepKey = Config.Bind("Asset Sweep", "ManualSweepKey", KeyCode.F8, "Hotkey for Run Cleanup (one memory cleanup now).");
         QolMenuKey = Config.Bind("Hotkeys", "QolMenuKey", KeyCode.Home, "Hotkey to open or close the BlueSage QoL menu. Set to None to disable this hotkey; /qolmenu always remains available.");
         StyleMenuKey = Config.Bind("Hotkeys", "StyleMenuKey", KeyCode.Insert, "Hotkey to toggle Style Helper. Set to None to disable this hotkey.");
         NoclipFlyKey = Config.Bind("Hotkeys", "NoclipFlyKey", KeyCode.End, "Hotkey to toggle self-only noclip/fly mode without opening the QoL menu. Set to None to disable this hotkey.");
         ApplyStartupHotkeyRepair();
         EnableToastNotifications = Config.Bind("Notifications", "EnableToastNotifications", true, "Shows a brief on-screen toast alongside the usual chat notification for hotkey toggles and rebinds, so it's visible even in a busy, fast-scrolling chat.");
-        HostMotd = Config.Bind("Host", "HostMotd", string.Empty, "Short welcome QoL players see when they join a lobby you host (toast + chat). Leave empty for \"Welcome to my server!\". Set it in-game with /motd or the QoL menu.");
+        HostMotd = Config.Bind("Host", "HostMotd", string.Empty, "Short welcome QoL players see when they join a lobby you host (toast + chat). Leave empty for \"Welcome to my lobby!\". Set it in-game with /motd or the QoL menu.");
         ToastHoldSeconds = Config.Bind("Notifications", "ToastHoldSeconds", ToastPolicy.DefaultHoldSeconds, "Seconds a toast stays fully visible before it fades (2-15). Raise it if toasts disappear before you finish reading.");
         ToastScalePercent = Config.Bind("Notifications", "ToastScalePercent", 0, "Toast size: 0 = Auto (grows with your screen resolution from 1080p, never smaller than normal), or 75-200 percent.");
         EnableHostAnnouncements = Config.Bind("Notifications", "EnableHostAnnouncements", true, "Shows heads-up toasts the lobby host or an assigned Helper sends with /announce (restarts, breaks). Separate from Toast Pop-ups; the chat line always appears.");
@@ -1741,6 +1815,7 @@ public sealed partial class Plugin : BaseUnityPlugin
         ChatFontSizePercent = Config.Bind("Chat Readability", "ChatFontSizePercent", ChatFontSizePolicy.DefaultFontSizePercent, "Local chat message font size from 75 to 200 percent. Default 100 keeps vanilla text size; larger values enlarge message text without scaling the whole chat shell.");
         ChatWindowHeightPercent = Config.Bind("Chat Readability", "ChatWindowHeightPercent", ChatWindowHeightPolicy.DefaultHeightPercent, "Local chat window height from 100 to 200 percent. Default 100 keeps vanilla size; larger values add vertical chat space without scaling text.");
         ChatHistoryRows = Config.Bind("Chat Readability", "ChatHistoryRows", ChatHistoryLimitPolicy.DefaultRows, "Retained chat rows from 25 to 250. Default 150 balances useful scrollback with large-lobby UI cost; BlueSage never lowers a higher vanilla or other-mod limit.");
+        LocalChatRangeMeters = Config.Bind("Chat Readability", "LocalChatRangeMeters", LocalChatRangePolicy.DefaultMeters, "How far away a local chat line can be and still show in your own chat window, from 5 to 25 meters. Default 15; 5 is the game's own range. This only changes what you see; global chat has no range.");
         ChatOutlineColor = Config.Bind("Chat Readability", "ChatOutlineColor", "000000", "Six-character hex color for the normal local chat outline path. Default 000000.");
         BlackChatOutlineColor = Config.Bind("Chat Readability", "BlackChatOutlineColor", "C0C0C0", "Six-character hex color for true-black styled chat/name outline path. Default C0C0C0 light grey.");
         BlackNamesOutline = Config.Bind("Chat Readability", "BlackNamesOutline", true, "Use the black-text outline color for true-black chat/name rows. On by default so black styled names and messages stay readable; turn off to force the normal outline color.");
@@ -1788,7 +1863,8 @@ public sealed partial class Plugin : BaseUnityPlugin
         SpoonLabel = Config.Bind("Spoons", "SpoonLabel", DefaultSpoonLabel, "Short custom label used after 0/5. Use /setmood label; default is sp.");
         SpoonsUpdatedUtc = Config.Bind("Spoons", "SpoonsUpdatedUtc", string.Empty, "UTC timestamp for the last spoon update.");
         EnableStyleUi = Config.Bind("Style Helper", "EnableStyleUi", true, "Enable the BlueSage /styleui preset and clipboard helper window.");
-        EnableExtendedAvatarStyles = Config.Bind("Avatar Styles", "EnableExtendedAvatarStyles", true, "Add reversible avatar preset slots 4-9 while preserving vanilla slots 1-3.");
+        EnableExtendedAvatarStyles = Config.Bind("Avatar Styles", "EnableExtendedAvatarStyles", true, "Adds six extra outfit slots (4 to 9) below the game's three in the avatar screen's style list. They start on. Styles 1 to 3 stay the game's own and never change; if you turn this off, your extra outfits wait for you.");
+        OutfitSlotsHintShown = Config.Bind("Avatar Styles", "OutfitSlotsHintShown", false, "Set to true after BlueSage showed its one-time note about the extra outfit slots. Set it back to false to see the note again.");
         EnableChalkboardPersistence = Config.Bind("Chalkboards", "EnableChalkboardPersistence", true, "Save chalkboards locally. Only the host can restore a saved board for the lobby. Automatically stands down when Chalky is installed.");
         MaxChatCharacters = Config.Bind("Text Limits", "MaxChatCharacters", publicDefaults.ChatTextLimit, "Default 4000 (the maximum). Lower it if very long chat lines wrap oddly with rich-text tags or after a game update.");
         MaxProfileCharacters = Config.Bind("Text Limits", "MaxProfileCharacters", publicDefaults.ProfileTextLimit, "Default 4000 for names, ID cards, and styled profile text. Lower it if another mod or future game update needs a shorter limit.");
@@ -1854,8 +1930,7 @@ public sealed partial class Plugin : BaseUnityPlugin
         };
         EnableMiniMapFriendColors = Config.Bind("MiniMap", "EnableMiniMapFriendColors", true, "Color Steam friends green on the local minimap using cached Steam relationship checks. Automatically stands down when MinimapFriends is installed.");
         UiThemePreset = Config.Bind("Style Helper", "UiThemePreset", publicDefaults.Theme, "Menu theme: BlueSage Harbor, Midnight Dock, Vanilla Cream OT, or OG. Midnight Dock is the public default; existing saved choices are preserved.");
-        EnableHiddenDiagnostics = Config.Bind("Developer", "EnableHiddenDiagnostics", false, "Optional troubleshooting diagnostics. Off by default to keep large lobbies quiet; use /bluedevdebug on when collecting a focused support log.");
-        EnableLocalAuditExports = Config.Bind("Local Audit", "EnableLocalAuditExports", true, "Export a bounded local chat/notification JSONL transcript and running BepInEx log mirror. Exact SteamID/persona enrichment is added only while you are the verified host or an assigned Helper. Never uploaded automatically; /auditlog controls it.");
+        EnableLocalAuditExports = Config.Bind("Local Audit", "EnableLocalAuditExports", false, "Optional, off by default. Keeps a local copy of chat and the game log in BepInEx/BlueSageQoLModSuite/logs, one folder per session. The newest 3 sessions (or 3 days, or 24 MB, whichever comes first) stay as plain files; older ones are zipped into archive and kept 14 days, about 48 MB in total. The whole BlueSage folder never stays over 1 GB. One session is at most about 20 MB plus 2 snapshots of up to 8 MB. Steam IDs are added only while you host or are a Helper. Never uploaded. Use /auditlog on, off, snapshot or folder.");
         BindOptionalLocalBridgeConfig();
         EnableLocalAuditExports.SettingChanged += (_, __) => SessionAuditController.ReconcileEnabledState();
         ConfigMigrationVersion = Config.Bind("Internal", "ConfigMigrationVersion", string.Empty, "Tracks one-time BlueSage QoL default migrations. Safe to ignore.");
@@ -1873,14 +1948,42 @@ public sealed partial class Plugin : BaseUnityPlugin
         bool sweepDefaultsMigrated = ConfigMigrationPolicy.HasCompletedMigration(ConfigMigrationVersion?.Value, ConfigMigrationPolicy.SweepFifteenMinuteV1Migration);
         bool sweepTenMinuteSafetyMigrated = ConfigMigrationPolicy.HasCompletedMigration(ConfigMigrationVersion?.Value, ConfigMigrationPolicy.SweepTenMinuteSafetyV2Migration);
         bool sweepAutomaticOptInMigrated = ConfigMigrationPolicy.HasCompletedMigration(ConfigMigrationVersion?.Value, ConfigMigrationPolicy.SweepAutomaticOptInV3Migration);
+        bool sweepOverlapAvoidanceMigrated = ConfigMigrationPolicy.HasCompletedMigration(ConfigMigrationVersion?.Value, ConfigMigrationPolicy.SweepFortyMinuteOverlapV4Migration);
         bool communityBanAnyClientOptInMigrated = ConfigMigrationPolicy.HasCompletedMigration(
             ConfigMigrationVersion?.Value,
             ConfigMigrationPolicy.CommunityBanAnyClientOptInV1Migration);
+        bool sweepNotifyQuietMigrated = ConfigMigrationPolicy.HasCompletedMigration(
+            ConfigMigrationVersion?.Value,
+            ConfigMigrationPolicy.SweepNotifyQuietV5Migration);
+        bool localAuditOffMigrated = ConfigMigrationPolicy.HasCompletedMigration(
+            ConfigMigrationVersion?.Value,
+            ConfigMigrationPolicy.LocalAuditOffV6Migration);
         bool changed = false;
+        if (EnableLocalAuditExports != null)
+        {
+            // Round 5d: the local audit becomes opt-in; existing installs turn it off once, a later "on" sticks.
+            bool migrated = LocalFileBudgetPolicy.MigrateLocalAudit(EnableLocalAuditExports.Value, freshInstall || localAuditOffMigrated);
+            if (migrated != EnableLocalAuditExports.Value)
+            {
+                EnableLocalAuditExports.Value = migrated;
+                changed = true;
+            }
+        }
+
+        if (NotifyOnSweep != null)
+        {
+            // Round 5 F: existing installs go quiet once; a fresh install already has the new default.
+            bool migrated = SweepSettingsPolicy.MigrateSweepNotification(NotifyOnSweep.Value, freshInstall || sweepNotifyQuietMigrated);
+            if (migrated != NotifyOnSweep.Value)
+            {
+                NotifyOnSweep.Value = migrated;
+                changed = true;
+            }
+        }
 
         if (SweepIntervalMinutes != null)
         {
-            int migrated = SweepSettingsPolicy.ResolveStartupIntervalMinutes(SweepIntervalMinutes.Value, freshInstall, sweepDefaultsMigrated, sweepTenMinuteSafetyMigrated);
+            int migrated = SweepSettingsPolicy.ResolveStartupIntervalMinutes(SweepIntervalMinutes.Value, freshInstall, sweepDefaultsMigrated, sweepTenMinuteSafetyMigrated, sweepOverlapAvoidanceMigrated);
             if (migrated != SweepIntervalMinutes.Value)
             {
                 SweepIntervalMinutes.Value = migrated;
@@ -2079,6 +2182,9 @@ public sealed partial class Plugin : BaseUnityPlugin
         migrationLedger = ConfigMigrationPolicy.RecordMigration(migrationLedger, ConfigMigrationPolicy.SweepTenMinuteSafetyV2Migration);
         migrationLedger = ConfigMigrationPolicy.RecordMigration(migrationLedger, ConfigMigrationPolicy.SweepAutomaticOptInV3Migration);
         migrationLedger = ConfigMigrationPolicy.RecordMigration(migrationLedger, ConfigMigrationPolicy.CommunityBanAnyClientOptInV1Migration);
+        migrationLedger = ConfigMigrationPolicy.RecordMigration(migrationLedger, ConfigMigrationPolicy.SweepFortyMinuteOverlapV4Migration);
+        migrationLedger = ConfigMigrationPolicy.RecordMigration(migrationLedger, ConfigMigrationPolicy.SweepNotifyQuietV5Migration);
+        migrationLedger = ConfigMigrationPolicy.RecordMigration(migrationLedger, ConfigMigrationPolicy.LocalAuditOffV6Migration);
         if (ConfigMigrationVersion != null && !string.Equals(ConfigMigrationVersion.Value, migrationLedger, StringComparison.Ordinal))
         {
             ConfigMigrationVersion.Value = migrationLedger;
@@ -2108,17 +2214,42 @@ public sealed partial class Plugin : BaseUnityPlugin
 
         while (true)
         {
+            // Voice pass NOISE 1: settle once per visit whether this is a Reconnect Guard return to the same lobby.
+            // Runs whatever the welcome toggle says, so the host-message poll and this loop always agree.
+            bool quietReconnectVisit = TryGetCurrentLobbyKeyForWelcomeMessage(out string quietVisitKey) && IsQuietReconnectVisit(quietVisitKey);
+
             // The overlay is intentionally independent of EnableWelcomeMessage (that toggle only
             // controls the chat lines below) -- it must still offer itself even if the player has
             // turned the chat welcome message off. See WelcomeOverlayWiringContractTests.
+            // Round 5e: the pop-up waits until the lobby id is known (so the quiet-return decision above is settled)
+            // and stays closed after a Reconnect Guard return to the same lobby, like the welcome lines and Tip.
             if (TryGetCurrentLobbyKeyForWelcomeMessage(out string overlayLobbyKey) &&
+                WelcomeRepeatPolicy.LobbyIdOf(overlayLobbyKey).Length > 0 &&
                 WelcomeOverlayPolicy.ShouldOffer(
                     EnableWelcomeOverlay?.Value == true,
                     overlayLobbyKey,
                     _welcomeOverlayOfferedVisitKey))
             {
                 _welcomeOverlayOfferedVisitKey = overlayLobbyKey;
-                _welcomeOverlayVisible = true;
+                _welcomeOverlayVisible = !quietReconnectVisit;
+            }
+
+            // Round 4 WS6: calm compatibility heads-up when another Helper-like QoL mod is loaded. Once per
+            // session, only in a lobby, never on top of the welcome pop-up or the full guide pop-up (review R3).
+            // The shown flag is checked first so the lobby lookup stops once the notice is done, and it is set only
+            // after the chat line lands (chat is not ready for the first moments in a lobby).
+            if (!_otherQolModNoticeShown &&
+                OtherQolModNoticePolicy.ShouldFire(TryGetCurrentLobbyKeyForWelcomeMessage(out _), _welcomeOverlayVisible || _guideOverlayVisible, _otherQolModNoticeShown))
+            {
+                if (!OtherQolModNoticePolicy.TryBuildNotice(Chainloader.PluginInfos.Keys, out string otherModNotice))
+                {
+                    _otherQolModNoticeShown = true;
+                }
+                else if (AddLocalNotification(otherModNotice))
+                {
+                    _otherQolModNoticeShown = true;
+                    ShowToast(otherModNotice);
+                }
             }
 
             // Hotkey-repair notices are not part of the optional chat welcome: a player who turned
@@ -2150,7 +2281,7 @@ public sealed partial class Plugin : BaseUnityPlugin
 
                 if (!_welcomeMessageShownForLobby)
                 {
-                    _welcomeMessageShownForLobby = ShowWelcomeMessageForLobby();
+                    _welcomeMessageShownForLobby = ShowWelcomeMessageForLobby(quietReconnectVisit);
                 }
             }
             else
@@ -2220,19 +2351,100 @@ public sealed partial class Plugin : BaseUnityPlugin
             memberCount.Value >= 1;
     }
 
-    private bool ShowWelcomeMessageForLobby()
+    private bool ShowWelcomeMessageForLobby(bool quietReconnectVisit)
     {
+        // NOISE 1: a Reconnect Guard return to the same lobby already saw the welcome and the Tip.
+        if (!WelcomeRepeatPolicy.ShouldShowWelcome(quietReconnectVisit))
+        {
+            _welcomePrimaryShownForLobby = true;
+            _welcomeContextShownForLobby = true;
+            return true;
+        }
+
         bool firstShown = _welcomePrimaryShownForLobby || AddLocalNotification(NavigationCalloutPolicy.BuildPrimaryWelcomeMessage(PluginVersion, QolMenuKey.Value.ToString(), StyleMenuKey.Value.ToString()));
         _welcomePrimaryShownForLobby = firstShown;
         bool secondShown = _welcomeContextShownForLobby;
         if (!secondShown)
         {
-            string voiceGuidance = BuildVoiceWelcomeGuidance();
-            secondShown = AddLocalNotification("Tip: " + voiceGuidance +
-                " The game's Pomodoro/focus timer can earn tickets and XP for focus time; " + NavigationCalloutPolicy.BuildCommandBrowserHint() + " Quick status: /brb, /afk, /back. Local audit starts on; /auditlog status shows your private local logs. Green Steam-profile buttons verify player accounts.");
+            // NOISE 2: the long Tip line only on the first lobby visit of a game session. A skipped Tip counts as
+            // shown, so this visit's welcome settles instead of retrying every tick.
+            if (!WelcomeRepeatPolicy.ShouldShowTip(_welcomeTipShownThisSession, quietReconnectVisit))
+            {
+                secondShown = true;
+            }
+            else
+            {
+                string voiceGuidance = BuildVoiceWelcomeGuidance();
+                secondShown = AddLocalNotification("Tip: " + voiceGuidance +
+                    " The game's Pomodoro/focus timer can earn tickets and XP for focus time; " + NavigationCalloutPolicy.BuildCommandBrowserHint() + " Quick status: /brb, /afk, /back. Local Audit is off unless you turn it on; /auditlog status shows your private local logs. Green Steam-profile buttons verify player accounts.");
+                _welcomeTipShownThisSession = secondShown;
+            }
         }
         _welcomeContextShownForLobby = secondShown;
         return firstShown && secondShown;
+    }
+
+    // Voice pass (2026-10-23) NOISE 1. The welcome loop and the host-message poll both ask; whichever ticks first
+    // records the visit, so they always agree, and the answer is settled once per visit. A visit whose key has no
+    // lobby id yet ("visible|scene:") waits for the id before deciding.
+    internal static bool IsQuietReconnectVisit(string visitKey)
+    {
+        if (string.IsNullOrEmpty(visitKey))
+        {
+            return false;
+        }
+
+        string lobbyId = WelcomeRepeatPolicy.LobbyIdOf(visitKey);
+        if (!WelcomeLobbyKeyPolicy.IsSameVisit(_quietTrackedVisitKey, visitKey))
+        {
+            _quietTrackedVisitKey = visitKey;
+            _quietTrackedVisitDecided = false;
+            _quietTrackedVisitIsReconnectReturn = false;
+        }
+        else
+        {
+            // Same visit; the prefix can upgrade (code: or visible first, steam: once the Steam id resolves).
+            _quietTrackedVisitKey = visitKey;
+        }
+
+        // Code review: while Reconnect Guard is still joining, the visit that was current when it started (the menu
+        // scene) can already report the target lobby id; deciding there would spend the target before the real
+        // in-game visit. Only a later, different visit may decide a return.
+        bool stillTheVisitBeforeTheJoin = _reconnectReturnTargetLobbyId.Length > 0 &&
+                                          WelcomeLobbyKeyPolicy.IsSameVisit(_reconnectReturnNotedVisitKey, visitKey);
+        if (!_quietTrackedVisitDecided && lobbyId.Length > 0 && !stillTheVisitBeforeTheJoin)
+        {
+            _quietTrackedVisitDecided = true;
+            _quietTrackedVisitIsReconnectReturn = WelcomeRepeatPolicy.IsQuietReconnectReturn(visitKey, _reconnectReturnTargetLobbyId, _reconnectReturnLobbyIdBeforeDrop);
+            _reconnectReturnTargetLobbyId = string.Empty;
+            _reconnectReturnLobbyIdBeforeDrop = string.Empty;
+            if (_quietTrackedVisitIsReconnectReturn)
+            {
+                Log?.LogInfo("Welcome: Reconnect Guard returned you to the same lobby; the welcome, Tip and host message stay quiet this visit.");
+            }
+        }
+
+        if (lobbyId.Length > 0)
+        {
+            _lastVisitLobbyId = lobbyId;
+        }
+
+        return _quietTrackedVisitIsReconnectReturn;
+    }
+
+    // Remembered when Reconnect Guard starts joining, so the next visit can tell a same-lobby return.
+    private static void NoteReconnectReturnTarget(string targetLobbyId)
+    {
+        _reconnectReturnTargetLobbyId = (targetLobbyId ?? string.Empty).Trim();
+        _reconnectReturnLobbyIdBeforeDrop = _lastVisitLobbyId;
+        _reconnectReturnNotedVisitKey = _quietTrackedVisitKey ?? string.Empty;
+    }
+
+    private static void ClearReconnectReturnTarget()
+    {
+        _reconnectReturnTargetLobbyId = string.Empty;
+        _reconnectReturnLobbyIdBeforeDrop = string.Empty;
+        _reconnectReturnNotedVisitKey = string.Empty;
     }
 
     private string BuildVoiceWelcomeGuidance()
@@ -2309,26 +2521,27 @@ public sealed partial class Plugin : BaseUnityPlugin
         PluginCompatibilityResult compatibility = Instance?._compatibility;
         if (compatibility == null)
         {
-            return "Compatibility: loaded-mod scan is not ready yet.";
+            return "Still checking which mods are installed. Try again in a moment.";
         }
 
+        // Voice pass (2026-10-23): plain sentences, other mods by their mod name only (no modder names).
         var parts = new List<string>();
         if (compatibility.HushLoaded)
-            parts.Add("Hush shares the native ban store; BlueSage keeps separate exact-ID previews and authenticated Helpers");
+            parts.Add("Hush is installed: it shares the game's ban list; BlueSage still asks you to confirm each ban.");
         if (compatibility.EchoLoaded)
-            parts.Add("Echo can intentionally copy names/outfits, so Clone Shield remains clues-not-proof");
+            parts.Add("Echo is installed: it can copy names and outfits on purpose, so Clone Shield treats lookalikes as clues, not proof.");
         if (compatibility.DesyncLoaded)
-            parts.Add("Desync owns periodic lobby/persona repair; BlueSage Host Health is read-only");
+            parts.Add("Desync is installed: it handles lobby repairs, so BlueSage Host Health just watches.");
         if (compatibility.ChalkyLoaded)
-            parts.Add("Chalky owns board persistence/sync; BlueSage stands down");
+            parts.Add("Chalky is installed: it saves the chalkboards, so BlueSage leaves them alone.");
         if (compatibility.FomoLoaded)
-            parts.Add("Fomo may observe visible chat; authenticated Helper moderation/resolution uses non-chat Steam member data");
+            parts.Add("Fomo is installed: it may read visible chat; assigned Helper actions travel outside chat.");
         if (compatibility.AlphaLoaded && parts.Count == 0)
-            parts.Add("Alpha command utilities detected; no overlapping BlueSage owner changed");
+            parts.Add("Alpha is installed: nothing in BlueSage overlaps with it.");
 
         return parts.Count == 0
-            ? "Compatibility: no overlapping Andrew defensive/runtime surfaces detected."
-            : "Compatibility: " + string.Join(" • ", parts.ToArray()) + ".";
+            ? "No other safety mods found that overlap with BlueSage."
+            : string.Join(" ", parts.ToArray());
     }
 
     private IEnumerator RefreshCompatibilityAfterLoadSettles()
@@ -2392,6 +2605,24 @@ public sealed partial class Plugin : BaseUnityPlugin
             double nowSeconds = Time.realtimeSinceStartupAsDouble;
             _sweepSchedule.ReconcileInterval(nowSeconds, SweepIntervalMinutes.Value);
             bool automaticDue = _sweepSchedule.IsDue(nowSeconds);
+            // Round 4 Stage G (Marbles, 2026-10-20): never start a sweep just before or after the game's own 180 s
+            // autosave; the two stalls would stack. Retried every second until the quiet middle of the period.
+            if (automaticDue &&
+                TryReadAutosaveTimerSeconds(out float autosaveTimerSeconds) &&
+                AutosaveBoundaryPolicy.ShouldDefer(autosaveTimerSeconds))
+            {
+                if (!_sweepAutosaveDeferralLogged)
+                {
+                    _sweepAutosaveDeferralLogged = true;
+                    float untilAutosave = Math.Max(0f, AutosaveBoundaryPolicy.AutosavePeriodSeconds - autosaveTimerSeconds);
+                    Log.LogDebug($"[BlueSageSweep] automatic sweep deferred: the game autosaves in {untilAutosave:0}s or just did; retrying each second.");
+                }
+
+                yield return new WaitForSecondsRealtime(1f);
+                continue;
+            }
+
+            _sweepAutosaveDeferralLogged = false;
             bool vanillaStateAvailable = false;
             float vanillaTimerSeconds = 0f;
             float vanillaDurationSeconds = 0f;
@@ -2424,6 +2655,45 @@ public sealed partial class Plugin : BaseUnityPlugin
             }
 
             yield return new WaitForSecondsRealtime(1f);
+        }
+    }
+
+    private static bool _sweepAutosaveDeferralLogged;
+    private static bool _autosaveTimerFieldResolved;
+    private static FieldInfo _autosaveTimerField;
+
+    // Round 4 Stage G: the game's autosave clock (DataManager.saveTimer, private, counts up to 180 while the main
+    // scene is loaded). Unknown (menu, missing field, read failure) reads as "no timer", which never defers.
+    private static bool TryReadAutosaveTimerSeconds(out float seconds)
+    {
+        seconds = float.NaN;
+        try
+        {
+            if (!_autosaveTimerFieldResolved)
+            {
+                _autosaveTimerFieldResolved = true;
+                Type dataManagerType = AccessTools.TypeByName("DataManager");
+                _autosaveTimerField = dataManagerType == null ? null : AccessTools.Field(dataManagerType, "saveTimer");
+            }
+
+            if (_autosaveTimerField == null || MonoSingleton<MainSceneManager>.I == null)
+            {
+                return false;
+            }
+
+            object manager = MonoSingleton<DataManager>.I;
+            if (manager == null)
+            {
+                return false;
+            }
+
+            seconds = Convert.ToSingle(_autosaveTimerField.GetValue(manager));
+            return true;
+        }
+        catch
+        {
+            seconds = float.NaN;
+            return false;
         }
     }
 
@@ -2468,15 +2738,24 @@ public sealed partial class Plugin : BaseUnityPlugin
 
     internal bool RunSweep(string reason, bool requireManualPermission)
     {
+        _lastManualSweepRefusalNotice = string.Empty;
         if (requireManualPermission && !ManualSweepAllowed)
         {
             Log.LogWarning($"Skipping asset cleanup via {reason}: a compatibility guard is active.");
+            AnswerManualSweep(ManualSweepPausedNotice, reason);
+            _lastManualSweepRefusalNotice = ManualSweepPausedNotice;
             return false;
         }
 
         if (!_sweepOperationGate.TryStart(reason, out int sequence))
         {
             Log.LogInfo($"[BlueSageSweep] utc={DateTime.UtcNow:O}; phase=skip; seq={sequence}; trigger={SanitizeSweepLogValue(reason)}; activeTrigger={SanitizeSweepLogValue(_sweepOperationGate.ActiveReason)}; reason=operation-in-flight");
+            if (requireManualPermission)
+            {
+                AnswerManualSweep(ManualSweepBusyNotice, reason);
+                _lastManualSweepRefusalNotice = ManualSweepBusyNotice;
+            }
+
             return false;
         }
 
@@ -2490,9 +2769,47 @@ public sealed partial class Plugin : BaseUnityPlugin
             _sweepOperationGate.Complete(sequence);
             _activeSweepOperationCoroutine = null;
             Log.LogWarning($"[BlueSageSweep] utc={DateTime.UtcNow:O}; phase=failed; seq={sequence}; trigger={SanitizeSweepLogValue(reason)}; error={ex.GetType().Name}");
+            if (requireManualPermission)
+            {
+                AnswerManualSweep(ManualSweepFailedNotice, reason);
+                _lastManualSweepRefusalNotice = ManualSweepFailedNotice;
+            }
+
             return false;
         }
     }
+
+    // The menu and /sweep answer with the same specific notice RunSweep just gave (voice pass 2026-10-23).
+    private string _lastManualSweepRefusalNotice = string.Empty;
+
+    // A manual cleanup always answers, once (round 5d review): the hotkey has no other reply, so it gets a chat line
+    // and a toast (the line still arrives with Toast Pop-ups off); /sweep and the menu print the same sentence
+    // themselves, so they only get the toast.
+    private void AnswerManualSweep(string notice, string reason)
+    {
+        if (string.Equals(reason, "manual hotkey", StringComparison.Ordinal))
+        {
+            AddLocalNotificationWithToast(notice);
+        }
+        else
+        {
+            ShowToast(notice);
+        }
+    }
+
+    private string DescribeManualSweep(bool started)
+    {
+        return SweepMenuActionPolicy.BuildCompletionMessage(started, _lastManualSweepRefusalNotice);
+    }
+
+    // Round 5d (Blue: "more toasts not less"): a cleanup you asked for always answers, even when it cannot run.
+    // Voice pass (2026-10-23): the wording lives in SweepMenuActionPolicy ("cleanup", never sweep/tidy/asset).
+    internal const string ManualSweepPausedNotice = SweepMenuActionPolicy.PausedNotice;
+    internal const string ManualSweepBusyNotice = SweepMenuActionPolicy.BusyNotice;
+    internal const string ManualSweepFailedNotice = SweepMenuActionPolicy.StartFailedNotice;
+    internal const string ManualSweepRunFailedNotice = SweepMenuActionPolicy.RunFailedNotice;
+    internal const string SweepCompletedNotice = SweepMenuActionPolicy.CompletedNotice;
+    internal const string ReconnectBackInNotice = "You're back in the lobby. Welcome back!";
 
     internal static bool IsQolSweepCreatingNativeRoutine { get; private set; }
 
@@ -2544,10 +2861,10 @@ public sealed partial class Plugin : BaseUnityPlugin
     private IEnumerator CompleteSweepOperation(int sequence, string reason)
     {
         long managedBeforeBytes = GC.GetTotalMemory(false);
-        SweepResourceSnapshot resourceBefore = SweepResourceEvidenceCapture.Capture();
-        SweepSessionSnapshot sessionBefore = SweepSessionEvidenceCapture.Capture();
+        // Round 5 Stage D: Unity's own counters around the sweep, so the extra pass is measured, not argued.
+        SweepMemoryProbe memoryBefore = SweepMemoryProbe.Capture();
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-        Log.LogInfo($"[BlueSageSweep] utc={DateTime.UtcNow:O}; phase=start; seq={sequence}; trigger={SanitizeSweepLogValue(reason)}; managedBeforeMiB={managedBeforeBytes / 1048576d:0.0}; forceGc={ForceManagedGcCollect.Value}");
+        Log.LogInfo($"[BlueSageSweep] utc={DateTime.UtcNow:O}; phase=start; seq={sequence}; trigger={SanitizeSweepLogValue(reason)}; managedBeforeMiB={managedBeforeBytes / 1048576d:0.0}; forceGc={ForceManagedGcCollect.Value}; nativeAllocMiB={SweepMemoryReadingPolicy.FormatMiB(memoryBefore.AllocatedBytes)}; nativeReservedMiB={SweepMemoryReadingPolicy.FormatMiB(memoryBefore.ReservedBytes)}; monoHeapMiB={SweepMemoryReadingPolicy.FormatMiB(memoryBefore.MonoHeapBytes)}; monoUsedMiB={SweepMemoryReadingPolicy.FormatMiB(memoryBefore.MonoUsedBytes)}");
 
         bool nativeSweepFailed = false;
         if (TryCreateNativeSweepRoutine(out IEnumerator nativeSweepRoutine))
@@ -2593,6 +2910,12 @@ public sealed partial class Plugin : BaseUnityPlugin
                 stopwatch.Stop();
                 Log.LogWarning($"[BlueSageSweep] utc={DateTime.UtcNow:O}; phase=failed; seq={sequence}; trigger={SanitizeSweepLogValue(reason)}; elapsedMs={stopwatch.ElapsedMilliseconds}; error={ex.GetType().Name}");
                 FinishSweepOperation(sequence, reason);
+                // Voice pass NOISE 5: a cleanup the player asked for answers even when it fails mid-run.
+                if (SweepMenuActionPolicy.ShouldAnnounceRunFailure(reason))
+                {
+                    AddLocalNotificationWithToast(ManualSweepRunFailedNotice);
+                }
+
                 yield break;
             }
 
@@ -2607,21 +2930,19 @@ public sealed partial class Plugin : BaseUnityPlugin
             GC.Collect();
         }
 
-        SweepResourceSnapshot resourceAfter = SweepResourceEvidenceCapture.Capture();
-        SweepSessionSnapshot sessionAfter = SweepSessionEvidenceCapture.Capture();
-
         stopwatch.Stop();
         long managedAfterBytes = GC.GetTotalMemory(false);
         double managedDeltaMiB = (managedAfterBytes - managedBeforeBytes) / 1048576d;
-        string resourceEvidence = SweepResourceEvidenceFormatter.Format(resourceBefore, resourceAfter);
-        string sessionEvidence = SweepSessionEvidenceFormatter.Format(sessionBefore, sessionAfter);
-        Log.LogInfo($"[BlueSageSweep] utc={DateTime.UtcNow:O}; phase=complete; seq={sequence}; trigger={SanitizeSweepLogValue(reason)}; elapsedMs={stopwatch.ElapsedMilliseconds}; managedBeforeMiB={managedBeforeBytes / 1048576d:0.0}; managedAfterMiB={managedAfterBytes / 1048576d:0.0}; managedDeltaMiB={managedDeltaMiB:+0.0;-0.0;0.0}; forceGc={ForceManagedGcCollect.Value}; {resourceEvidence}; {sessionEvidence}");
+        SweepMemoryProbe memoryAfter = SweepMemoryProbe.Capture();
+        Log.LogInfo($"[BlueSageSweep] utc={DateTime.UtcNow:O}; phase=complete; seq={sequence}; trigger={SanitizeSweepLogValue(reason)}; elapsedMs={stopwatch.ElapsedMilliseconds}; managedBeforeMiB={managedBeforeBytes / 1048576d:0.0}; managedAfterMiB={managedAfterBytes / 1048576d:0.0}; managedDeltaMiB={managedDeltaMiB:+0.0;-0.0;0.0}; forceGc={ForceManagedGcCollect.Value}; nativeAllocAfterMiB={SweepMemoryReadingPolicy.FormatMiB(memoryAfter.AllocatedBytes)}; nativeAllocDeltaMiB={SweepMemoryReadingPolicy.FormatDeltaMiB(memoryBefore.AllocatedBytes, memoryAfter.AllocatedBytes)}; nativeReservedAfterMiB={SweepMemoryReadingPolicy.FormatMiB(memoryAfter.ReservedBytes)}; monoHeapAfterMiB={SweepMemoryReadingPolicy.FormatMiB(memoryAfter.MonoHeapBytes)}; monoUsedAfterMiB={SweepMemoryReadingPolicy.FormatMiB(memoryAfter.MonoUsedBytes)}; monoUsedDeltaMiB={SweepMemoryReadingPolicy.FormatDeltaMiB(memoryBefore.MonoUsedBytes, memoryAfter.MonoUsedBytes)}");
+        SessionSummaryController.NoteSweep();
 
         FinishSweepOperation(sequence, reason);
-        if (NotifyOnSweep.Value)
+        // Round 5 F: automatic sweeps are silent unless asked for; a cleanup the user triggered always confirms.
+        if (SweepSettingsPolicy.ShouldNotifyOnSweep(NotifyOnSweep.Value, reason))
         {
-            AddLocalNotification("BlueSage QoL swept unused assets.");
-            ShowToast("BlueSage QoL swept unused assets.");
+            AddLocalNotification(SweepCompletedNotice);
+            ShowToast(SweepCompletedNotice);
         }
     }
 
@@ -2646,6 +2967,24 @@ public sealed partial class Plugin : BaseUnityPlugin
     internal static string BuildTimestampPrefix()
     {
         return TimestampFormatter.BuildPrefix(DateTime.Now, Use24HourTime.Value, TimestampSizePercent.Value, TimestampColor.Value);
+    }
+
+    // Round 5h: one note, once per player, the first time the avatar panel opens with the extra outfit slots in place.
+    internal static void ShowOutfitSlotsHintOnce(int extraRowsReady)
+    {
+        if (Instance == null || OutfitSlotsHintShown == null)
+        {
+            return;
+        }
+
+        if (!OutfitSlotsHintPolicy.ShouldShow(OutfitSlotsHintShown.Value, EnableToastNotifications?.Value == true, extraRowsReady))
+        {
+            return;
+        }
+
+        Instance.ShowToast(OutfitSlotsHintPolicy.Notice);
+        OutfitSlotsHintShown.Value = true;
+        Instance.Config.Save();
     }
 
     // Chat line plus a toast: for events a player on a small screen could easily miss in busy chat.
@@ -2730,9 +3069,21 @@ public sealed partial class Plugin : BaseUnityPlugin
             AddLocalNotification(response);
         }
 
-        string loggedCommand = BlueSageCommandRegistry.TryParse(text, out string commandName, out _)
+        string loggedCommand = BlueSageCommandRegistry.TryParse(text, out string commandName, out string commandArguments)
             ? commandName.ToLowerInvariant()
             : "unknown";
+
+        // Round 5h: commands that change something answer with a toast too, like the matching QoL menu switch.
+        if (result.Messages.Count > 0)
+        {
+            BlueSageCommand matched = Instance._commandRegistry.Commands.FirstOrDefault(candidate => candidate.Matches(loggedCommand));
+            string[] tokens = (commandArguments ?? string.Empty).Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (CommandToastPolicy.ShouldToastFirstMessage(matched?.Name ?? loggedCommand, tokens))
+            {
+                Instance.ShowToast(ToastPolicy.Summarize(result.Messages[0]));
+            }
+        }
+
         Log?.LogInfo("BlueSage command handled locally: /" + loggedCommand + " (arguments redacted).");
         return false;
     }
@@ -2833,6 +3184,7 @@ public sealed partial class Plugin : BaseUnityPlugin
         return IsHelperManagementCommandName(normalized) || normalized == "sidlist" ||
                normalized == "sidwho" || normalized == "sidlookup" || normalized == "sidban" ||
                normalized == "sidunban" || normalized == "unbansid" ||
+               normalized == "sidkick" || normalized == "sidmute" || normalized == "sidunmute" ||
                normalized == "sidincident" || normalized == "cloneincident";
     }
 
@@ -2841,7 +3193,8 @@ public sealed partial class Plugin : BaseUnityPlugin
         if (command == null) return false;
         if (command.Matches("helper")) return CanManageHelpers();
         if (command.Matches("sidlist") || command.Matches("sidwho") ||
-            command.Matches("sidban") || command.Matches("sidunban") || command.Matches("sidincident"))
+            command.Matches("sidban") || command.Matches("sidunban") || command.Matches("sidincident") ||
+            command.Matches("sidkick") || command.Matches("sidmute") || command.Matches("sidunmute"))
             return CanUseLobbySafety(out _);
         return true;
     }
@@ -2923,6 +3276,21 @@ public sealed partial class Plugin : BaseUnityPlugin
         BlueSageCommandResult result = HandleSidBanCommand(new BlueSageCommandContext("/sidban " + steamId + " confirm", "sidban", steamId + " confirm"));
         foreach (string line in result.Messages) AddLocalNotification(line);
         return result.Messages.FirstOrDefault() ?? "SID ban confirmation was not available.";
+    }
+
+    // Round 4 Stage E #3: the selected-row Kick and Mute buttons reuse the command flow (preview, then confirm).
+    internal string PreviewSidLiveActionFromQolMenu(string action, string steamId)
+    {
+        BlueSageCommandResult result = HandleSidLiveActionCommand(new BlueSageCommandContext("/sid" + action + " " + steamId, "sid" + action, steamId), action, "SID " + action);
+        foreach (string line in result.Messages) AddLocalNotification(line);
+        return result.Messages.FirstOrDefault() ?? "SID " + action + " preview was not available.";
+    }
+
+    internal string ConfirmSidLiveActionFromQolMenu(string action, string steamId)
+    {
+        BlueSageCommandResult result = HandleSidLiveActionCommand(new BlueSageCommandContext("/sid" + action + " " + steamId + " confirm", "sid" + action, steamId + " confirm"), action, "SID " + action);
+        foreach (string line in result.Messages) AddLocalNotification(line);
+        return result.Messages.FirstOrDefault() ?? "SID " + action + " confirmation was not available.";
     }
 
     internal string PreviewSidUnbanFromQolMenu(string steamId)
@@ -3031,7 +3399,7 @@ public sealed partial class Plugin : BaseUnityPlugin
             WorkRelaxRuntimeController.SetMode);
         _commandRegistry.Register(new BlueSageCommand(
             "bsqol",
-            "Open the BlueSage guide pop-up (status, diag, hosthealth for checks)",
+            "Open the BlueSage guide pop-up (status, hosthealth for checks)",
             new[] { "qol", "guide", "faq" },
             HandleBlueSageQoLCommand));
         _commandRegistry.Register(new BlueSageCommand(
@@ -3058,7 +3426,7 @@ public sealed partial class Plugin : BaseUnityPlugin
             HandleAssetSweepCommand));
         _commandRegistry.Register(new BlueSageCommand(
             "rebind",
-            "Rebind the QoL menu, Style Helper, Noclip/Fly, or Manual Sweep hotkey in-game",
+            "Change the key for the QoL menu, Style Helper, Fly, or Run Cleanup",
             new[] { "bind", "kb", "keys" },
             HandleRebindCommand));
         _commandRegistry.Register(new BlueSageCommand(
@@ -3214,7 +3582,7 @@ public sealed partial class Plugin : BaseUnityPlugin
             context => HandleToggleCommand(context, "Chat Links", EnableChatUrlLinks)));
         _commandRegistry.Register(new BlueSageCommand(
             "auditlog",
-            "Control local chat and BepInEx audit exports",
+            "Local Audit: keep a copy of your chat and the game log on this computer",
             new[] { "sessionaudit", "localaudit" },
             HandleAuditLogCommand));
         _commandRegistry.Register(new BlueSageCommand(
@@ -3272,6 +3640,23 @@ public sealed partial class Plugin : BaseUnityPlugin
             "Identity status/local refresh, Host repair, or authenticated Helper request",
             new[] { "identitysync", "rostersync" },
             HandleIdentityResyncCommand));
+        // Round 4 Stage E #3: kick (ban, wait until gone, unban) and lobby-wide mute, same preview + confirm flow,
+        // same host check; Helpers relay through the host like /sidban.
+        _commandRegistry.Register(new BlueSageCommand(
+            "sidkick",
+            "Preview or confirm a kick: the host bans, waits until the player is gone (max 20 s), then unbans",
+            Array.Empty<string>(),
+            HandleSidKickCommand));
+        _commandRegistry.Register(new BlueSageCommand(
+            "sidmute",
+            "Preview or confirm a lobby-wide mute: the host stops relaying that player's chat (this hosting session)",
+            Array.Empty<string>(),
+            HandleSidMuteCommand));
+        _commandRegistry.Register(new BlueSageCommand(
+            "sidunmute",
+            "Preview or confirm lifting a lobby-wide mute",
+            Array.Empty<string>(),
+            HandleSidUnmuteCommand));
         _commandRegistry.Register(new BlueSageCommand(
             "sidban",
             "Preview or confirm a Steam ID ban checked by the host",
@@ -3327,13 +3712,6 @@ public sealed partial class Plugin : BaseUnityPlugin
             "Customize the short label shown in your optional 0/5 tag",
             new[] { "spoonlabel" },
             HandleSetMoodCommand));
-        string hiddenDiagnosticsCommand = DecodeCommandName("cmvfefwefcvh");
-        _commandRegistry.Register(new BlueSageCommand(
-            hiddenDiagnosticsCommand,
-            "BlueSage internal",
-            Array.Empty<string>(),
-            HandleHiddenDiagnosticsCommand,
-            isHidden: true));
         _commandRegistry.Register(new BlueSageCommand(
             BuildBlueSageClueCommandName(),
             "BlueSage internal",
@@ -3352,6 +3730,20 @@ public sealed partial class Plugin : BaseUnityPlugin
             Array.Empty<string>(),
             HandleSageWaveCommand,
             isHidden: true));
+        // Round 4 review R7: tombstone for the removed developer diagnostics command. Older UAT notes still
+        // mention it; without this, typing it would broadcast the text to the whole lobby.
+        _commandRegistry.Register(new BlueSageCommand(
+            "bluedevdebug",
+            "Removed; use the QoL menu's Local Audit snapshot",
+            Array.Empty<string>(),
+            HandleRetiredDeveloperDiagnosticsCommand,
+            isHidden: true));
+    }
+
+    private BlueSageCommandResult HandleRetiredDeveloperDiagnosticsCommand(BlueSageCommandContext context)
+    {
+        return BlueSageCommandResult.HandledWithMessages(
+            FormatBlueSageNotice("/bluedevdebug was removed. To share logs, open the QoL menu, turn on Local Audit Exports, then use Snapshot Now or Copy Audit Folder. This message stayed on your screen only."));
     }
 
     private BlueSageCommandResult HandleBlueSageQoLCommand(BlueSageCommandContext context)
@@ -3361,11 +3753,6 @@ public sealed partial class Plugin : BaseUnityPlugin
         {
             LogDetailedQolStatus();
             return BlueSageCommandResult.HandledWithMessages(BuildQolStatusMessage());
-        }
-
-        if (firstToken == "diag" && string.Equals(context.CommandName, "bsqol", StringComparison.OrdinalIgnoreCase))
-        {
-            return HandleHiddenDiagnosticsCommand(context);
         }
 
         if (firstToken == "hosthealth")
@@ -3403,7 +3790,7 @@ public sealed partial class Plugin : BaseUnityPlugin
 
         if (_qolMenuWindow == null)
         {
-            return BlueSageCommandResult.HandledWithMessages("QoL menu could not start; check BepInEx console.");
+            return BlueSageCommandResult.HandledWithMessages(SomethingWentWrongNotice);
         }
 
         _qolMenuWindow.ToggleVisible();
@@ -3422,11 +3809,14 @@ public sealed partial class Plugin : BaseUnityPlugin
         return BlueSageCommandResult.HandledWithMessages($"Style Helper: copied {result.RawLength}/{LockedMaxIdCardCharacters} chars. Paste into an ID/name/profile/room field.");
     }
 
+    // Voice pass (2026-10-23): one calm line when a window or update can't start; the details are in the log.
+    internal const string SomethingWentWrongNotice = "Something went wrong; try again, or restart the game if it keeps happening.";
+
     private BlueSageCommandResult HandleStyleUiCommand(BlueSageCommandContext context)
     {
         if (!EnableStyleUi.Value)
         {
-            return BlueSageCommandResult.HandledWithMessages("Style UI is disabled in config.");
+            return BlueSageCommandResult.HandledWithMessages("Style Helper is turned off. Turn it on in the QoL menu Toggles.");
         }
 
         if (_styleHelperWindow == null)
@@ -3436,11 +3826,13 @@ public sealed partial class Plugin : BaseUnityPlugin
 
         if (_styleHelperWindow == null)
         {
-            return BlueSageCommandResult.HandledWithMessages("Style UI could not start; check BepInEx console.");
+            return BlueSageCommandResult.HandledWithMessages(SomethingWentWrongNotice);
         }
 
         _styleHelperWindow.ToggleVisible();
-        return BlueSageCommandResult.HandledWithMessages("Style UI toggled. Use the BlueSage window to build and copy name/status text.");
+        return BlueSageCommandResult.HandledWithMessages(_styleHelperWindow.IsVisible
+            ? "Style Helper opened. Build and copy your name or status text there."
+            : "Style Helper closed.");
     }
 
     internal string TryApplyStyledNameFromStyleUi(string styledName)
@@ -3454,18 +3846,18 @@ public sealed partial class Plugin : BaseUnityPlugin
         string requestedName = (styledName ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(requestedName))
         {
-            return "Style UI: build a style before applying it to your name.";
+            return "Style Helper: build a style before applying it to your name.";
         }
 
         if (requestedName.Length > LockedMaxIdCardCharacters)
         {
-            return $"Style UI: styled name is too long ({requestedName.Length}/{LockedMaxIdCardCharacters}). Shorten it or use fewer per-letter colors.";
+            return $"Style Helper: styled name is too long ({requestedName.Length}/{LockedMaxIdCardCharacters}). Shorten it or use fewer per-letter colors.";
         }
 
         DisplayNameDraft draft = CaptureDisplayNameDraft(captureLiveBase: false);
         draft.BaseName = requestedName;
-        BlueSageCommandResult result = TryApplyDisplayNameDraft(draft, "Style UI: name updated.", out applied);
-        return result.Messages.Count > 0 ? result.Messages[0] : "Style UI: name updated.";
+        BlueSageCommandResult result = TryApplyDisplayNameDraft(draft, "Style Helper: name updated.", out applied);
+        return result.Messages.Count > 0 ? result.Messages[0] : "Style Helper: name updated.";
     }
 
     internal string TryApplyPlainNameFromStyleUi(string plainName)
@@ -3479,18 +3871,18 @@ public sealed partial class Plugin : BaseUnityPlugin
         string requestedName = (plainName ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(requestedName) || string.Equals(requestedName, "YOURNAMEHERE", StringComparison.OrdinalIgnoreCase))
         {
-            return "Style UI: type your name first.";
+            return "Style Helper: type your name first.";
         }
 
         if (requestedName.Length > LockedMaxIdCardCharacters)
         {
-            return $"Style UI: name is too long ({requestedName.Length}/{LockedMaxIdCardCharacters}).";
+            return $"Style Helper: name is too long ({requestedName.Length}/{LockedMaxIdCardCharacters}).";
         }
 
         DisplayNameDraft draft = CaptureDisplayNameDraft(captureLiveBase: false);
         draft.BaseName = requestedName;
-        BlueSageCommandResult result = TryApplyDisplayNameDraft(draft, "Style UI: name updated.", out applied);
-        return result.Messages.Count > 0 ? result.Messages[0] : "Style UI: name updated.";
+        BlueSageCommandResult result = TryApplyDisplayNameDraft(draft, "Style Helper: name updated.", out applied);
+        return result.Messages.Count > 0 ? result.Messages[0] : "Style Helper: name updated.";
     }
 
     internal string TryApplyStatusFromStyleUi(string plainName, string status, string color)
@@ -3514,8 +3906,8 @@ public sealed partial class Plugin : BaseUnityPlugin
             draft.StatusColor = hex;
         }
 
-        BlueSageCommandResult result = TryApplyDisplayNameDraft(draft, "Style UI: status updated.", out applied);
-        return result.Messages.Count > 0 ? result.Messages[0] : "Style UI: status updated.";
+        BlueSageCommandResult result = TryApplyDisplayNameDraft(draft, "Style Helper: status updated.", out applied);
+        return result.Messages.Count > 0 ? result.Messages[0] : "Style Helper: status updated.";
     }
 
     internal string TryClearStatusFromStyleUi()
@@ -3527,8 +3919,8 @@ public sealed partial class Plugin : BaseUnityPlugin
     {
         DisplayNameDraft draft = CaptureDisplayNameDraft(captureLiveBase: true);
         draft.StatusMessage = string.Empty;
-        BlueSageCommandResult result = TryApplyDisplayNameDraft(draft, "Style UI: status cleared.", out applied);
-        return result.Messages.Count > 0 ? result.Messages[0] : "Style UI: status cleared.";
+        BlueSageCommandResult result = TryApplyDisplayNameDraft(draft, "Style Helper: status cleared.", out applied);
+        return result.Messages.Count > 0 ? result.Messages[0] : "Style Helper: status cleared.";
     }
 
     internal string GetCurrentPlayerDisplayNameForStyleUi()
@@ -4034,7 +4426,7 @@ public sealed partial class Plugin : BaseUnityPlugin
 
         if (textChannelManager == null || textChannelManager.MainCustomizationController == null)
         {
-            return BlueSageCommandResult.HandledWithMessages("Status Helper: native player identity sync is not ready yet.");
+            return BlueSageCommandResult.HandledWithMessages("Your player info is still loading. Try again in a moment.");
         }
 
         DisplayNameDraft previousConfig = CaptureDisplayNameDraft(captureLiveBase: false);
@@ -4091,7 +4483,7 @@ public sealed partial class Plugin : BaseUnityPlugin
             RestoreDisplayNameConfig(previousConfig);
             TryRestoreNativeDisplayName(dataManager, previousPlayerName, textChannelManager, previousChannelName, uiManager, previousUiName);
             Log.LogWarning($"Status Helper update failed: {ex.GetType().Name}: {ex.Message}");
-            return BlueSageCommandResult.HandledWithMessages("Status Helper: update failed; check BepInEx console.");
+            return BlueSageCommandResult.HandledWithMessages(SomethingWentWrongNotice);
         }
     }
 
@@ -4737,7 +5129,7 @@ public sealed partial class Plugin : BaseUnityPlugin
         IReadOnlyList<PlayerIdentityEvidence> matches = PlayerIdentityEvidenceController.ResolveLookupMatches(lookup, out string error);
         if (matches.Count == 0)
         {
-            return BlueSageCommandResult.HandledWithMessages("SID lookup NOT RESOLVED: " + error + " No moderation action was taken.");
+            return BlueSageCommandResult.HandledWithMessages("Couldn't find that player (" + (error ?? string.Empty).Trim().TrimEnd('.') + "). Nothing was done.");
         }
 
         if (matches.Count > 1)
@@ -4761,17 +5153,17 @@ public sealed partial class Plugin : BaseUnityPlugin
         {
             GUIUtility.systemCopyBuffer = PlayerIdentityEvidenceController.BuildCopyableEvidence(evidence);
             return BlueSageCommandResult.HandledWithMessages(
-                "SID lookup COPY: copied verified live row #" + (evidence.RosterIndex + 1) + " with displayed name, raw TMP source, Steam persona, exact SteamID64, PlayerID, and current role. Nothing was sent to chat.");
+                "Player details copied (row #" + (evidence.RosterIndex + 1) + ": name, Steam name, SteamID64, PlayerID and role). Nothing was sent to chat.");
         }
 
         var messages = new List<string>
         {
-            "SID lookup VERIFIED | row #" + (evidence.RosterIndex + 1) + " | " + evidence.DisplayName,
+            "Found player | row #" + (evidence.RosterIndex + 1) + " | " + evidence.DisplayName,
             "SteamID64: " + evidence.SteamId + " | PlayerID " + evidence.NetworkPlayerId + " | ending …" + PlayerIdentityEvidenceController.Suffix(evidence.SteamId) + " | " + evidence.Role,
         };
         if (!string.IsNullOrWhiteSpace(evidence.SteamPersona)) messages.Add("Cached Steam persona: " + evidence.SteamPersona + ". Use the green profile button to open this exact account.");
         if (!string.Equals(evidence.DisplayNameRaw, evidence.DisplayName, StringComparison.Ordinal))
-            messages.Add("Raw TMP name source is visible and copyable in Lobby Safety and the local chat audit JSONL.");
+            messages.Add("Their name has hidden styling. Lobby Safety shows the exact text, and Local Audit keeps a copy if it's on.");
         messages.Add("Read-only evidence only. Recheck the profile before /sidban; cloned names never authorize or select a ban target.");
         return BlueSageCommandResult.HandledWithMessages(messages.ToArray());
     }
@@ -4835,11 +5227,80 @@ public sealed partial class Plugin : BaseUnityPlugin
         }
 
         _pendingModerationAction = BuildPendingModeration("ban", target, exactOffRoster);
-        return BlueSageCommandResult.HandledWithMessages((exactOffRoster ? "SID ban OFFLINE PREVIEW: " : "SID ban PREVIEW: SUSPECT ") + target.SteamId +
+        return BlueSageCommandResult.HandledWithMessages("Ban preview for " + target.SteamId +
             (target.IncidentId == "none" ? string.Empty : " from " + target.IncidentId) +
             (exactOffRoster
-                ? ". This exact ID is not in the current lobby. No kick will be attempted. Verify the Steam profile, then use /sidban " + target.SteamId + " confirm within 30 seconds."
-                : ". Victim IDs are protected. Verify the Steam profile, then use /sidban " + (target.IncidentId == "none" ? target.SteamId : target.IncidentId) + " confirm within 30 seconds."));
+                ? " (not in this lobby, so no kick happens): check their Steam profile, then type /sidban " + target.SteamId + " confirm within 30 s."
+                : ": check their Steam profile, then type /sidban " + (target.IncidentId == "none" ? target.SteamId : target.IncidentId) + " confirm within 30 s."));
+    }
+
+    private BlueSageCommandResult HandleSidKickCommand(BlueSageCommandContext context) => HandleSidLiveActionCommand(context, "kick", "SID kick");
+
+    private BlueSageCommandResult HandleSidMuteCommand(BlueSageCommandContext context) => HandleSidLiveActionCommand(context, "mute", "SID mute");
+
+    private BlueSageCommandResult HandleSidUnmuteCommand(BlueSageCommandContext context) => HandleSidLiveActionCommand(context, "unmute", "SID unmute");
+
+    // Round 4 Stage E #3: kick, mute and unmute act only on a verified LIVE row (no offline path), through the same
+    // preview + confirm + host-check flow as /sidban.
+    private BlueSageCommandResult HandleSidLiveActionCommand(BlueSageCommandContext context, string action, string label)
+    {
+        if (!CanUseLobbySafety(out _)) return LobbySafetyDeniedResult();
+        string arguments = (context.Arguments ?? string.Empty).Trim();
+        bool confirm = arguments.Equals("confirm", StringComparison.OrdinalIgnoreCase) || arguments.EndsWith(" confirm", StringComparison.OrdinalIgnoreCase);
+        string query = confirm
+            ? (arguments.Equals("confirm", StringComparison.OrdinalIgnoreCase) ? string.Empty : arguments.Substring(0, arguments.Length - " confirm".Length).Trim())
+            : arguments;
+
+        if (confirm)
+        {
+            return ConfirmPendingModeration(action, query);
+        }
+
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return BlueSageCommandResult.HandledWithMessages(label + ": use a verified current row, C# incident, or exact SteamID64 of a player who is in the lobby now. " +
+                (action == "kick"
+                    ? "Kick = ban through the game's own flow, wait until the player is gone (max 20 s), then unban; if they are still here at 20 s the ban stays and you are told."
+                    : action == "mute"
+                        ? "Mute = the host stops relaying that player's chat to everyone for this hosting session, including the host; the muted player's own messages stop appearing for them too, so they will notice. Voice is unaffected."
+                        : "Unmute lifts a lobby-wide mute (an exact SteamID64 works even if the player already left)."));
+        }
+
+        if (!SteamIdModerationController.CanLocalIssue(out _, out string unavailable))
+            return BlueSageCommandResult.HandledWithMessages(label + ": " + unavailable);
+
+        string[] currentSteamIds = PlayerIdentityEvidenceController.GetVerifiedCurrentSteamIds(out string rosterError).ToArray();
+        if (!string.IsNullOrWhiteSpace(rosterError))
+            return BlueSageCommandResult.HandledWithMessages(label + ": verified live roster unavailable: " + rosterError + ". No preview was created.");
+
+        ModerationTarget target;
+        bool exactOffRoster = false;
+        if (action == "unmute" && ModerationProtocolPolicy.IsSteamId64(query) && !currentSteamIds.Contains(query, StringComparer.Ordinal))
+        {
+            // Lifting a mute is harmless, and the muted player may already have left: an exact id needs no live row.
+            target = new ModerationTarget(query, "none");
+            exactOffRoster = true;
+        }
+        else if (!ModerationTargetResolver.TryResolve(query, currentSteamIds, out target, out string error))
+        {
+            return BlueSageCommandResult.HandledWithMessages(label + ": " + error);
+        }
+
+        if (action != "unmute" && CloneIncidentLedger.IsProtectedVictim(target.SteamId))
+        {
+            return BlueSageCommandResult.HandledWithMessages(label + " blocked: Steam " + FormatSteamIdSuffix(target.SteamId) + " is the protected victim in an open Clone Shield incident.");
+        }
+
+        if (action != "unmute" && SteamIdModerationController.IsAuthorizedCurrentIssuer(target.SteamId))
+        {
+            return BlueSageCommandResult.HandledWithMessages(label + " blocked: the selected Steam account is the current host or an assigned Helper. No preview or pending action was created.");
+        }
+
+        _pendingModerationAction = BuildPendingModeration(action, target, exactOffRoster);
+        string confirmWith = target.IncidentId == "none" ? target.SteamId : target.IncidentId;
+        return BlueSageCommandResult.HandledWithMessages(label + " preview for " + target.SteamId +
+            (target.IncidentId == "none" ? string.Empty : " from " + target.IncidentId) +
+            ": check their Steam profile, then type /sid" + action + " " + confirmWith + " confirm within the countdown. The host checks the player is still here before acting; an assigned Helper's request goes through the host.");
     }
 
     private BlueSageCommandResult HandleSidUnbanCommand(BlueSageCommandContext context)
@@ -4933,9 +5394,29 @@ public sealed partial class Plugin : BaseUnityPlugin
                 return BlueSageCommandResult.HandledWithMessages("SID ban revalidation failed: " + (error ?? "target or victim role changed") + ". No action was taken.");
             }
         }
+        else if ((action == "kick" || action == "mute" || action == "unmute") && !(action == "unmute" && pending.TargetWasOffline))
+        {
+            // Round 4 Stage E #3: live actions re-resolve the exact row at confirm time, like a live ban. An exact-id
+            // unmute of a player who already left skips this: the only effect is removing an id from the mute set.
+            if (!ModerationTargetResolver.TryResolve(pending.IncidentId == "none" ? pending.TargetSteamId : pending.IncidentId,
+                    SteamIdModerationController.GetCurrentPlayerSteamIds(), out ModerationTarget liveTarget, out string error) ||
+                !string.Equals(liveTarget.SteamId, pending.TargetSteamId, StringComparison.Ordinal) ||
+                (action != "unmute" && CloneIncidentLedger.IsProtectedVictim(pending.TargetSteamId)))
+            {
+                _pendingModerationAction = null;
+                return BlueSageCommandResult.HandledWithMessages("SID " + action + " revalidation failed: " + (error ?? "target or victim role changed") + ". No action was taken.");
+            }
+        }
 
         _pendingModerationAction = null;
         bool sent = SteamIdModerationController.TrySendHelperRequest(action, pending.TargetSteamId, pending.IncidentId, out string message);
+        // Round 4 Stage E #3: a host on an older BlueSage build ignores kick/mute/unmute requests silently, so a Helper is told.
+        if (sent && (action == "kick" || action == "mute" || action == "unmute") &&
+            SteamIdModerationController.CanLocalIssue(out bool localIsHost, out _) && !localIsHost)
+        {
+            message += " The host acts only if its BlueSage build accepts kick and mute (round 4 or later); an older host ignores this request silently.";
+        }
+
         return BlueSageCommandResult.HandledWithMessages((sent ? "SID " + action + ": " : "SID " + action + " rejected: ") + message);
     }
 
@@ -4969,7 +5450,25 @@ public sealed partial class Plugin : BaseUnityPlugin
         {
             return false;
         }
-        string code = MonoSingleton<MultiplayerManager>.I?.LobbyCode;
+
+        // Round 4 Stage I (advisor): vanilla's LobbyCode getter dereferences CurrentLobby, which a reconnect mod can
+        // leave null after the game's host-lost teardown; a Helper in that state still needs the lobby to act, so the
+        // Reconnect Guard's saved lobby id is the fallback.
+        string code = null;
+        try
+        {
+            code = MonoSingleton<MultiplayerManager>.I?.LobbyCode;
+        }
+        catch (Exception)
+        {
+            code = null;
+        }
+
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            code = LastReconnectLobbyCode;
+        }
+
         if (!SteamManager.Initialized || !ulong.TryParse(code, out ulong raw) || raw == 0UL)
         {
             return false;
@@ -4977,6 +5476,8 @@ public sealed partial class Plugin : BaseUnityPlugin
         lobbyId = new CSteamID(raw);
         return SteamMatchmaking.GetLobbyOwner(lobbyId) != CSteamID.Nil;
     }
+
+    internal static string LastReconnectLobbyCode => Instance?._lastReconnectLobbyCode ?? string.Empty;
 
     private static bool TryResolveLobbyMemberSteamId(string query, out string steamId, out string error)
     {
@@ -5066,7 +5567,7 @@ public sealed partial class Plugin : BaseUnityPlugin
     {
         if (!EnableStyleUi.Value)
         {
-            return "Style UI is disabled in config.";
+            return "Style Helper is turned off. Turn it on in the QoL menu Toggles.";
         }
 
         if (_styleHelperWindow == null)
@@ -5076,7 +5577,7 @@ public sealed partial class Plugin : BaseUnityPlugin
 
         if (_styleHelperWindow == null)
         {
-            return "Style UI could not start; check BepInEx console.";
+            return SomethingWentWrongNotice;
         }
 
         _styleHelperWindow.ToggleVisible();
@@ -5086,7 +5587,7 @@ public sealed partial class Plugin : BaseUnityPlugin
     internal string RunManualSweepFromQolMenu()
     {
         bool started = RunSweep("QoL menu", requireManualPermission: true);
-        return SweepMenuActionPolicy.BuildCompletionMessage(started);
+        return DescribeManualSweep(started);
     }
 
     internal string RunHostHealthFromQolMenu()
@@ -5712,8 +6213,7 @@ public sealed partial class Plugin : BaseUnityPlugin
         if (context.Tokens.Count == 0)
         {
             return BlueSageCommandResult.HandledWithMessages(
-                SweepMenuActionPolicy.BuildCompletionMessage(
-                    RunSweep("manual command", requireManualPermission: true)));
+                DescribeManualSweep(RunSweep("manual command", requireManualPermission: true)));
         }
 
         return HandleToggleCommand(
@@ -5722,8 +6222,7 @@ public sealed partial class Plugin : BaseUnityPlugin
             EnableAutoSweep,
             RestartSweepLoop,
             "now",
-            () => SweepMenuActionPolicy.BuildCompletionMessage(
-                RunSweep("manual command", requireManualPermission: true)));
+            () => DescribeManualSweep(RunSweep("manual command", requireManualPermission: true)));
     }
 
     private BlueSageCommandResult HandleTimestampCommand(BlueSageCommandContext context)
@@ -5831,11 +6330,6 @@ public sealed partial class Plugin : BaseUnityPlugin
         return enabled ? "on" : "off";
     }
 
-    private static string FormatNullableCount(int? value)
-    {
-        return value.HasValue ? value.Value.ToString() : "?";
-    }
-
     private void RestartHostHealthLoop()
     {
         if (_hostHealthCoroutine != null)
@@ -5872,19 +6366,31 @@ public sealed partial class Plugin : BaseUnityPlugin
 
         HostHealthInput input = CaptureHostHealthInput(out CSteamID? lobbyId, out string[] playerSteamIds);
         PlayerLimitCompanionStatus playerLimitStatus = CapturePlayerLimitCompanionStatusWithLobby();
-        LogHiddenDiagnosticSnapshot(reason, input, lobbyId, playerSteamIds);
         HostHealthDecision decision = HostHealthPolicy.Evaluate(input);
-        _lastHostHealthDecision = decision;
         bool applyRepairs = HostHealthRepairsAllowed;
 
         if (!decision.ShouldRunDiagnostics)
         {
-            Log.LogInfo($"Host Health skipped via {reason}: local player is not the host/lobby owner.");
-            return "Host Health: client/no-op. Only the host runs lobby health checks.";
+            // Round 5d sweep: a guest's automatic tick wrote this every 5 minutes (about 288 lines a day); manual runs still say it.
+            if (isManualRun) Log.LogInfo($"Host Health skipped via {reason}: local player is not the host/lobby owner.");
+            else Log.LogDebug($"Host Health skipped via {reason}: local player is not the host/lobby owner.");
+            return "Host Health: only the lobby host runs these checks.";
         }
 
         string issueText = decision.Issues.Count == 0 ? "healthy" : string.Join(", ", decision.Issues.Select(issue => issue.ToString()).ToArray());
-        Log.LogInfo($"Host Health check via {reason}: {issueText}. {playerLimitStatus.ToDiagnosticText()}.");
+        // Round 4 Stage D log diet (#7): automatic ticks log only when the health picture changed (one line per
+        // streak); manual runs always answer. The member counts are not part of the key: they change on every join
+        // or leave and now live in the host journal's status rows.
+        string healthKey = issueText;
+        string previousHealthKey = _lastHostHealthLogKey;
+        bool healthChanged = !string.Equals(_lastHostHealthLogKey, healthKey, StringComparison.Ordinal);
+        _lastHostHealthLogKey = healthKey;
+        if (isManualRun || healthChanged)
+        {
+            Log.LogInfo($"Host Health check via {reason}: {issueText}. {playerLimitStatus.ToDiagnosticText()}.");
+        }
+
+        HostJournalController.RecordHostHealth(input.LobbyValid, issueText);
 
         if (applyRepairs && decision.Actions.Contains(HostHealthAction.RefreshLobbyMetadata) && LockedHostHealthRefreshLobbyMetadata)
         {
@@ -5896,40 +6402,56 @@ public sealed partial class Plugin : BaseUnityPlugin
             RequestPersonaRefresh(playerSteamIds);
         }
 
-        if (decision.Issues.Count > 0)
+        if (decision.Issues.Count > 0 && (isManualRun || healthChanged))
         {
+            // One warning per streak, not one per tick (#7).
             Log.LogWarning($"Host Health diagnostic issue via {reason}: {issueText}. No recreate-lobby warning is emitted without join-failure evidence.");
         }
 
+        if (decision.Actions.Contains(HostHealthAction.NotifyHostLobbyLost) && healthChanged &&
+            string.Equals(previousHealthKey, "healthy", StringComparison.Ordinal))
+        {
+            // Round 5b: on 2026-10-23 the host sat on LobbyOwnerInvalid for 40 minutes without a word while guests
+            // cycled through reconnects. One toast per streak, and only on a healthy-to-lost transition, so a session
+            // that never had a Steam lobby (offline or solo hosting) never hears it. The journal row carries the state.
+            AddLocalNotificationWithToast(HostLobbyLostNotice);
+        }
+
+        // Voice pass (2026-10-23): the reply is plain; the issue names and the PlayerLimit detail stay in the
+        // "Host Health check via" log line above.
         string repairText = applyRepairs
-            ? "Metadata refresh=on, persona refresh=on"
-            : "Read-only compatibility mode; Desync owns metadata/persona repair";
-        return $"Host Health: {issueText}. {repairText}. No recreate-lobby warning without join-failure evidence. {playerLimitStatus.ToDiagnosticText()}.";
+            ? "BlueSage refreshes your lobby listing for you."
+            : "Another mod handles lobby repairs, so BlueSage just watches.";
+        return "Host Health: " + DescribeHostHealthForPlayer(decision.Issues) + ". " + repairText;
     }
 
-    private BlueSageCommandResult HandleHiddenDiagnosticsCommand(BlueSageCommandContext context)
+    private static string DescribeHostHealthForPlayer(IEnumerable<HostHealthIssue> issues)
     {
-        int actionIndex = string.Equals(context.CommandName, "bsqol", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
-        string action = context.Tokens.Count > actionIndex ? context.Tokens[actionIndex].Trim().ToLowerInvariant() : "status";
-        switch (action)
+        var plain = new List<string>();
+        foreach (HostHealthIssue issue in issues)
         {
-            case "on":
-                EnableHiddenDiagnostics.Value = true;
-                Config.Save();
-                Log.LogInfo($"BlueSage diagnostics enabled. Watch for [BlueSageDiag] lines in BepInEx log: {GetBepInExLogPath()}");
-                LogHiddenDiagnosticSnapshot("hidden diag enabled");
-                return BlueSageCommandResult.HandledWithMessages($"BlueSage diagnostics: on. Shareable BepInEx diagnostics omit exact player/lobby identities; protected mappings stay in authorized local audit files. BepInEx log: {GetBepInExLogPath()}");
-            case "off":
-                EnableHiddenDiagnostics.Value = false;
-                Config.Save();
-                Log.LogInfo("BlueSage diagnostics disabled. Large-lobby play stays quieter until you explicitly turn diagnostics on again.");
-                return BlueSageCommandResult.HandledWithMessages($"BlueSage diagnostics: off. Large-lobby play stays quieter. Use /bluedevdebug on only when collecting a focused support log. BepInEx log: {GetBepInExLogPath()}");
-            case "status":
-            case "?":
-                return BlueSageCommandResult.HandledWithMessages($"BlueSage diagnostics: {(ShouldEmitHiddenDiagnostics ? "on" : "off")}. BepInEx log: {GetBepInExLogPath()}");
-            default:
-                return BlueSageCommandResult.HandledWithMessages($"BlueSage diagnostics: use on, off, or status. BepInEx log: {GetBepInExLogPath()}");
+            switch (issue)
+            {
+                case HostHealthIssue.LobbyOwnerInvalid:
+                    // Worded apart from HostLobbyLostNotice: the log readout counts that notice's phrase once per loss.
+                    plain.Add("Steam lost your lobby, so new players can't join");
+                    break;
+                case HostHealthIssue.HostIdentityLost:
+                    plain.Add("the game lost track of you as host");
+                    break;
+                case HostHealthIssue.HostMissingFromPlayerList:
+                    plain.Add("you're missing from the player list");
+                    break;
+                case HostHealthIssue.HostPersonaEmpty:
+                    plain.Add("your Steam name hasn't loaded yet");
+                    break;
+                default:
+                    plain.Add(issue.ToString());
+                    break;
+            }
         }
+
+        return plain.Count == 0 ? "all good" : string.Join("; ", plain.ToArray());
     }
 
     private void StartCommunityBanListMaintenance()
@@ -5995,7 +6517,7 @@ public sealed partial class Plugin : BaseUnityPlugin
                    CommunityBanListController.FriendlyStatusText();
         }
         StartCoroutine(RunCommunityBanManualRefresh());
-        return "Community BanData refresh started locally. It can append only validated missing pairs; it cannot kick, ban, or grant authority.";
+        return "Checking the Community Safety List now. It only adds names; it never kicks or bans.";
     }
 
     internal void ReconcileCommunityBanMaintenanceFromQolMenu()
@@ -6028,7 +6550,7 @@ public sealed partial class Plugin : BaseUnityPlugin
         {
             return BlueSageCommandResult.HandledWithMessages(
                 CommunityBanListController.FriendlyStatusText(),
-                "Attestation: local BlueSageAudit/community-ban-source-attestation.json; bounded operational fields only, with no player identities.");
+                "Attestation: local BlueSageQoLModSuite/trackers/community-ban-attestation.json (list facts only, no player names).");
         }
         if (action == "refresh" || action == "validate")
         {
@@ -6066,7 +6588,7 @@ public sealed partial class Plugin : BaseUnityPlugin
             EnableLocalAuditExports.Value = false;
             Config.Save();
             SessionAuditController.ReconcileEnabledState();
-            return BlueSageCommandResult.HandledWithMessages("Local session audit: off. Existing files remain local and are not deleted. /auditlog on resumes capture.");
+            return BlueSageCommandResult.HandledWithMessages("Local Audit is off. Your saved files stay on this computer; type /auditlog on to turn it back on.");
         }
 
         if (action == "path" || action == "folder" || action == "copy")
@@ -6075,126 +6597,7 @@ public sealed partial class Plugin : BaseUnityPlugin
         if (action == "snapshot" || action == "flush")
             return BlueSageCommandResult.HandledWithMessages(SessionAuditController.SnapshotNow());
 
-        return BlueSageCommandResult.HandledWithMessages("Local session audit: use /auditlog status, on, off, path, or snapshot. Files are local-only and never uploaded automatically.");
-    }
-
-    private static string GetBepInExLogPath()
-    {
-        try
-        {
-            return Path.Combine(Paths.BepInExRootPath, "LogOutput.log");
-        }
-        catch
-        {
-            return "BepInEx/LogOutput.log";
-        }
-    }
-
-    private void LogHiddenDiagnosticSnapshot(string reason)
-    {
-        HostHealthInput input = CaptureHostHealthInput(out CSteamID? lobbyId, out string[] playerSteamIds);
-        LogHiddenDiagnosticSnapshot(reason, input, lobbyId, playerSteamIds);
-    }
-
-    private void LogHiddenDiagnosticSnapshot(string reason, HostHealthInput input, CSteamID? lobbyId, string[] playerSteamIds)
-    {
-        if (!ShouldEmitHiddenDiagnostics || input == null)
-        {
-            return;
-        }
-
-        TryGetVisibleLobbyCounts(out int? visibleMembers, out int? visibleMaxPlayers);
-        TryGetSteamLobbyCounts(lobbyId, out int? steamLobbyMembers, out int? steamLobbyLimit);
-        TryGetLobbySurfaceMetadata(lobbyId, out _, out _, out string lobbyVisibility);
-        string lastDecisionText = _lastHostHealthDecision == null
-            ? "none"
-            : (_lastHostHealthDecision.Issues.Count == 0 ? "healthy" : string.Join("|", _lastHostHealthDecision.Issues.Select(issue => issue.ToString()).ToArray()));
-        string playerRosterFingerprint = BuildPlayerRosterFingerprint(playerSteamIds);
-        PlayerLimitCompanionStatus playerLimitStatus = CapturePlayerLimitCompanionStatusWithLobby();
-        LobbySafetyAccessState lobbySafetyState = SteamIdModerationController.GetLocalAccessState(out _, out _);
-        string identityRoster = PlayerIdentityEvidenceController.GetDiagnosticRosterSummary();
-        string processMemory = BuildProcessMemoryDiagnosticSummary();
-        string panelObjects = Patches.BlueSageEnhancedPanelButtonMarker.GetDiagnosticSummary();
-        string chatState = Patches.ChatReadabilityPatch.GetDiagnosticStateSummary();
-        string voicePositionState = Patches.VoicePositionRateGuardPatch.GetDiagnosticSummary();
-
-        Log.LogInfo(
-            $"[BlueSageDiag] utc={DateTime.UtcNow:O}; " +
-            $"build={PluginBuildIdentity}; " +
-            $"reason={SanitizeDiagnosticValue(reason)}; " +
-            $"netIsHost={input.IsHost}; " +
-            $"isHostMachine={input.IsHostMachine}; " +
-            $"lobbyValid={input.LobbyValid}; " +
-            $"identityDetail=private-audit-only; " +
-            $"panelSteamIds={input.PlayerSteamIds.Count}; " +
-            $"identityRoster={identityRoster}; " +
-            $"processMemory={processMemory}; " +
-            $"panelObjects={panelObjects}; " +
-            $"chatState={chatState}; " +
-            $"voicePosition={voicePositionState}; " +
-            $"lobbySafety={lobbySafetyState}; " +
-            $"serverFlagCount={input.ServerPlayerCount}; " +
-            $"visibleLobby={FormatNullableCount(visibleMembers)}/{FormatNullableCount(visibleMaxPlayers)}; " +
-            $"steamLobbyMembers={FormatNullableCount(steamLobbyMembers)}; " +
-            $"steamLobbyLimit={FormatNullableCount(steamLobbyLimit)}; " +
-            $"lobbyVisibility={SanitizeDiagnosticValue(lobbyVisibility)}; " +
-            $"loadedPlugins={Chainloader.PluginInfos.Count}; " +
-            $"{playerLimitStatus.ToDiagnosticText()}; " +
-            $"lastHostHealth={lastDecisionText}; " +
-            $"panelRosterFingerprint={playerRosterFingerprint}; " +
-            $"panelSteamIdList=omitted-public");
-    }
-
-    private static string BuildProcessMemoryDiagnosticSummary()
-    {
-        try
-        {
-            using (System.Diagnostics.Process process = System.Diagnostics.Process.GetCurrentProcess())
-            {
-                return "managedMiB=" + Math.Round(GC.GetTotalMemory(false) / 1048576d, 1) +
-                       ",workingSetMiB=" + Math.Round(process.WorkingSet64 / 1048576d, 1) +
-                       ",privateMiB=" + Math.Round(process.PrivateMemorySize64 / 1048576d, 1) +
-                       ",handles=" + process.HandleCount +
-                       ",gc=" + GC.CollectionCount(0) + "/" + GC.CollectionCount(1) + "/" + GC.CollectionCount(2);
-            }
-        }
-        catch (Exception ex)
-        {
-            return "unavailable-" + ex.GetType().Name;
-        }
-    }
-
-    private static string BuildPlayerRosterFingerprint(string[] playerSteamIds)
-    {
-        if (playerSteamIds == null || playerSteamIds.Length == 0)
-        {
-            return "none";
-        }
-
-        string[] orderedIds = playerSteamIds
-            .Where(value => !string.IsNullOrWhiteSpace(value))
-            .OrderBy(value => value, StringComparer.Ordinal)
-            .ToArray();
-        if (orderedIds.Length == 0)
-        {
-            return "none";
-        }
-
-        const ulong offsetBasis = 14695981039346656037UL;
-        const ulong prime = 1099511628211UL;
-        ulong hash = offsetBasis;
-        foreach (string steamId in orderedIds)
-        {
-            foreach (char character in steamId)
-            {
-                hash ^= character;
-                hash *= prime;
-            }
-            hash ^= (byte)'|';
-            hash *= prime;
-        }
-
-        return $"{orderedIds.Length}:{hash:X16}";
+        return BlueSageCommandResult.HandledWithMessages("Local Audit: type /auditlog status, on, off, path, or snapshot. Your files stay on this computer and are never uploaded.");
     }
 
     private HostHealthInput CaptureHostHealthInput(out CSteamID? lobbyId, out string[] playerSteamIds)
@@ -6289,6 +6692,9 @@ public sealed partial class Plugin : BaseUnityPlugin
             LockedHostHealthWarnAfterHours);
     }
 
+    // Round 5 F: the heartbeat line is written on change only (451 of 690 QoL Info lines in a 37.5 h host were it).
+    private static string _lastHostHealthHeartbeatLogKey = string.Empty;
+
     private static void RefreshLobbyMetadataHeartbeat(CSteamID? lobbyId, PlayerLimitCompanionStatus playerLimitStatus)
     {
         if (PluginShutdownController.IsShuttingDown) return;
@@ -6310,7 +6716,12 @@ public sealed partial class Plugin : BaseUnityPlugin
             if (ok || heartbeatCompatOk)
             {
                 string playerLimitText = playerLimitStatus?.ToDiagnosticText() ?? "PlayerLimit=unknown";
-                Log.LogInfo($"Host Health H1: refreshed Steam lobby heartbeat metadata at {timestamp}; heartbeatCompat={(heartbeatCompatOk ? "ok" : "failed")}; preservedSurfaceKeys={refreshedSurfaceKeys}; {playerLimitText}.");
+                string heartbeatLogKey = HostHealthHeartbeatLogPolicy.BuildKey(heartbeatCompatOk, refreshedSurfaceKeys, playerLimitText);
+                if (HostHealthHeartbeatLogPolicy.ShouldLog(_lastHostHealthHeartbeatLogKey, heartbeatLogKey))
+                {
+                    _lastHostHealthHeartbeatLogKey = heartbeatLogKey;
+                    Log.LogInfo($"Host Health H1: refreshed Steam lobby heartbeat metadata at {timestamp}; heartbeatCompat={(heartbeatCompatOk ? "ok" : "failed")}; preservedSurfaceKeys={refreshedSurfaceKeys}; {playerLimitText}. Logged on change only; the lobby count is in the host journal.");
+                }
             }
             else
             {
@@ -6553,7 +6964,11 @@ public sealed partial class Plugin : BaseUnityPlugin
             secondsSinceLastManagedAttempt: _lastManagedReconnectAttemptAt < 0f ? (float?)null : Time.unscaledTime - _lastManagedReconnectAttemptAt,
             reconnectAttempt: Math.Max(1, _managedReconnectAttempt + 1),
             visibleLobbyMemberCount: memberCount,
-            visibleLobbyMaxPlayers: maxPlayers));
+            visibleLobbyMaxPlayers: maxPlayers,
+            lobbyGenerationsUsed: GetReconnectGenerationsUsedForLobby(_lastReconnectLobbyCode),
+            maxGenerationsPerLobby: LockedReconnectMaxGenerationsPerLobby,
+            secondsSinceLastGuardActivity: GetSecondsSinceReconnectGuardIdle(),
+            budgetIdleResetSeconds: LockedReconnectBudgetIdleResetSeconds));
 
         switch (decision.Action)
         {
@@ -6566,6 +6981,12 @@ public sealed partial class Plugin : BaseUnityPlugin
             case ReconnectGuardAction.StopManagedRetry:
                 Log.LogWarning($"Reconnect Guard: {decision.Reason}");
                 StopManagedReconnect(decision.Reason);
+                if (decision.BudgetSpent)
+                {
+                    // The native ReturnMenu runs (return true); the player lands on the menu and hears why.
+                    AddLocalNotificationWithToast(ReconnectBudgetSpentNotice);
+                }
+
                 return true;
             case ReconnectGuardAction.WaitForManagedRetryCadence:
                 Log.LogInfo($"Reconnect Guard: {decision.Reason}");
@@ -6595,6 +7016,7 @@ public sealed partial class Plugin : BaseUnityPlugin
         }
 
         _cleanMenuReconnectActive = true;
+        NoteReconnectGenerationStarted();
         _managedReconnectSuccessAnnounced = false;
         _reconnectReadySampleCount = 0;
         _reconnectQuorumReadySince = -1f;
@@ -6606,7 +7028,7 @@ public sealed partial class Plugin : BaseUnityPlugin
     {
         _cleanMenuReconnectPhase = "native-teardown";
         Log.LogWarning($"Reconnect Guard generation {generation}: {source}; native teardown must reach the clean menu before any join attempt.");
-        AddLocalNotificationWithToast("BlueSage reconnect is cleaning up the old session first.");
+        AddLocalNotificationWithToast(ReconnectStartingNotice);
 
         if (!nativeTeardownAlreadyStarting)
         {
@@ -6644,7 +7066,7 @@ public sealed partial class Plugin : BaseUnityPlugin
         if (consecutiveMenuReadyFrames < 3)
         {
             FinishCleanMenuReconnect(generation, "native teardown did not reach a clean menu; no rejoin was attempted");
-            AddLocalNotificationWithToast("BlueSage reconnect stopped safely at cleanup; use the menu to rejoin.");
+            AddLocalNotificationWithToast(ReconnectStoppedNotice);
             yield break;
         }
 
@@ -6681,7 +7103,7 @@ public sealed partial class Plugin : BaseUnityPlugin
             {
                 string abortReason = EnableReconnectGuard.Value ? "you started a join yourself" : "Reconnect Guard was turned off";
                 FinishCleanMenuReconnect(generation, $"rejoin hold aborted: {abortReason}; no automatic rejoin");
-                AddLocalNotificationWithToast($"BlueSage reconnect cancelled: {abortReason}, so nothing was joined automatically.");
+                AddLocalNotificationWithToast(ReconnectStoppedNotice);
                 yield break;
             }
 
@@ -6693,7 +7115,7 @@ public sealed partial class Plugin : BaseUnityPlugin
             if (ReconnectRejoinHoldPolicy.ShouldCancelHold(notReadyStreakSeconds))
             {
                 FinishCleanMenuReconnect(generation, $"player left the clean menu during the rejoin hold ({holdMenuReason}); no automatic rejoin");
-                AddLocalNotificationWithToast("BlueSage reconnect cancelled: you moved on before the rejoin, so nothing was joined automatically.");
+                AddLocalNotificationWithToast(ReconnectStoppedNotice);
                 yield break;
             }
         }
@@ -6704,14 +7126,15 @@ public sealed partial class Plugin : BaseUnityPlugin
         if (!ReconnectRejoinHoldPolicy.IsSafeToJoinNow(EnableReconnectGuard.Value, IsPlayerJoinInProgress(), joinInProgressAtHoldStart, finalMenuReady))
         {
             FinishCleanMenuReconnect(generation, $"final pre-join check failed ({finalMenuReason}); no automatic rejoin");
-            AddLocalNotificationWithToast("BlueSage reconnect cancelled right before rejoining: something else is already joining, so nothing was joined automatically.");
+            AddLocalNotificationWithToast(ReconnectStoppedNotice);
             yield break;
         }
 
         _cleanMenuReconnectPhase = "joining-saved-lobby";
         _lastLobbyRejoinInProgress = true;
+        NoteReconnectReturnTarget(targetLobbyCode);
         Log.LogWarning($"Reconnect Guard generation {generation}: joining saved lobby {RedactLobbyCode(targetLobbyCode)} from clean menu with isChangeLobby=false.");
-        AddLocalNotificationWithToast("BlueSage reconnect is joining the saved lobby from the clean menu.");
+        AddLocalNotificationWithToast(ReconnectJoiningNotice);
 
         try
         {
@@ -6757,7 +7180,7 @@ public sealed partial class Plugin : BaseUnityPlugin
         }
 
         Log.LogWarning($"Reconnect Guard generation {generation}: saved-lobby join did not produce a playable scene within {LockedReconnectJoinValidationTimeoutSeconds}s; returning through native cleanup.");
-        AddLocalNotificationWithToast("BlueSage reconnect joined incompletely; cleaning up instead of looping.");
+        AddLocalNotificationWithToast(ReconnectIncompleteNotice);
         bool terminalMenuReady = IsCleanMenuReadyForReconnect(requireBlueSageJoinIdle: false, out string terminalMenuReason);
         if (!terminalMenuReady)
         {
@@ -6788,7 +7211,7 @@ public sealed partial class Plugin : BaseUnityPlugin
             yield break;
         }
 
-        AddLocalNotificationWithToast("BlueSage reconnect stopped at the menu without starting another loop.");
+        AddLocalNotificationWithToast(ReconnectStoppedNotice);
     }
 
     private void FinishCleanMenuReconnect(int generation, string reason)
@@ -6799,6 +7222,13 @@ public sealed partial class Plugin : BaseUnityPlugin
         }
 
         Log.LogWarning($"Reconnect Guard generation {generation} finished in phase {_cleanMenuReconnectPhase}: {reason}.");
+        if (!string.Equals(reason, "playable scene confirmed", StringComparison.Ordinal))
+        {
+            // A reconnect that never got in must not quiet a later manual join to the same lobby.
+            ClearReconnectReturnTarget();
+        }
+
+        MarkReconnectGuardIdle();
         _cleanMenuReconnectActive = false;
         _cleanMenuReconnectPhase = "idle";
         _cleanMenuReconnectCoroutine = null;
@@ -6858,150 +7288,6 @@ public sealed partial class Plugin : BaseUnityPlugin
         }
     }
 
-    private void StartManagedReconnectLoop(string source, int intervalSeconds, int maxAttempts)
-    {
-        if (_managedReconnectCoroutine != null)
-        {
-            return;
-        }
-
-        _managedReconnectActive = true;
-        _managedReconnectSuccessAnnounced = false;
-        _managedReconnectCoroutine = StartCoroutine(ManagedReconnectLoop(source, intervalSeconds, maxAttempts));
-    }
-
-    private IEnumerator ManagedReconnectLoop(string source, int intervalSeconds, int maxAttempts)
-    {
-        Log.LogWarning($"Reconnect Guard started managed retry loop after {source}. Interval={intervalSeconds}s, max={maxAttempts}.");
-        float connectedSince = -1f;
-
-        Log.LogWarning($"Reconnect Guard initial wait {intervalSeconds}s before first canonical saved-lobby cleanup/rejoin attempt so lobby state can settle.");
-        if (LockedReconnectShowNotifications)
-        {
-            AddLocalNotificationWithToast($"BlueSage reconnect will try in {intervalSeconds}s.");
-        }
-
-        float initialWaited = 0f;
-        while (initialWaited < intervalSeconds)
-        {
-            yield return null;
-            initialWaited += Time.unscaledDeltaTime;
-
-            bool waitingClientConnected = IsNetworkClientConnected();
-            if (waitingClientConnected && connectedSince < 0f)
-            {
-                connectedSince = Time.unscaledTime;
-            }
-            else if (!waitingClientConnected)
-            {
-                connectedSince = -1f;
-            }
-
-            ReconnectRuntimeHealthDecision initialDecision = EvaluateManagedReconnectRuntime(connectedSince);
-            if (initialDecision.Action == ReconnectRuntimeHealthAction.ConfirmSuccess)
-            {
-                Log.LogWarning($"Reconnect Guard confirmed usable runtime during initial wait: {initialDecision.Reason}");
-                AnnounceManagedReconnectSuccess();
-                StopManagedReconnect("client connected during initial wait");
-                yield break;
-            }
-
-            if (initialDecision.Action == ReconnectRuntimeHealthAction.ReturnToMenu)
-            {
-                Log.LogWarning($"Reconnect Guard could not confirm a usable runtime during initial wait: {initialDecision.Reason}");
-                StopManagedReconnect(initialDecision.Reason);
-                HandleReconnectFailureFallback(initialDecision.Reason);
-                yield break;
-            }
-        }
-
-        while (_managedReconnectAttempt < maxAttempts)
-        {
-            bool clientConnected = IsNetworkClientConnected();
-            if (clientConnected && connectedSince < 0f)
-            {
-                connectedSince = Time.unscaledTime;
-            }
-            else if (!clientConnected)
-            {
-                connectedSince = -1f;
-            }
-
-            ReconnectRuntimeHealthDecision runtimeDecision = EvaluateManagedReconnectRuntime(connectedSince);
-            if (runtimeDecision.Action == ReconnectRuntimeHealthAction.ConfirmSuccess)
-            {
-                Log.LogWarning($"Reconnect Guard confirmed usable runtime: {runtimeDecision.Reason}");
-                AnnounceManagedReconnectSuccess();
-                StopManagedReconnect("client connected");
-                yield break;
-            }
-
-            if (runtimeDecision.Action == ReconnectRuntimeHealthAction.ReturnToMenu)
-            {
-                Log.LogWarning($"Reconnect Guard could not confirm a usable runtime: {runtimeDecision.Reason}");
-                StopManagedReconnect(runtimeDecision.Reason);
-                HandleReconnectFailureFallback(runtimeDecision.Reason);
-                yield break;
-            }
-
-            TryGetVisibleLobbyCounts(out int? memberCount, out int? maxPlayers);
-            bool visibleLobbyConfirmed = memberCount.HasValue && memberCount.Value >= 1;
-
-            _managedReconnectAttempt++;
-            _lastManagedReconnectAttemptAt = Time.unscaledTime;
-
-            if (!clientConnected)
-            {
-                string lobbyStatus = visibleLobbyConfirmed ? $"{memberCount}/{maxPlayers}" : "not confirmed";
-                Log.LogWarning($"Reconnect Guard: transport is disconnected with lobby {lobbyStatus}; using canonical saved-lobby cleanup/rejoin instead of calling StartClient directly.");
-                StopManagedReconnect("switching to canonical lobby rejoin");
-                HandleReconnectFailureFallback("transport disconnected; canonical lobby rejoin required");
-                yield break;
-            }
-            else
-            {
-                Log.LogWarning($"Reconnect Guard attempt {_managedReconnectAttempt}/{maxAttempts}: {runtimeDecision.Reason}");
-            }
-
-            float waited = 0f;
-            while (waited < intervalSeconds)
-            {
-                yield return null;
-                waited += Time.unscaledDeltaTime;
-
-                bool waitingClientConnected = IsNetworkClientConnected();
-                if (waitingClientConnected && connectedSince < 0f)
-                {
-                    connectedSince = Time.unscaledTime;
-                }
-                else if (!waitingClientConnected)
-                {
-                    connectedSince = -1f;
-                }
-
-                ReconnectRuntimeHealthDecision waitingDecision = EvaluateManagedReconnectRuntime(connectedSince);
-                if (waitingDecision.Action == ReconnectRuntimeHealthAction.ConfirmSuccess)
-                {
-                    Log.LogWarning($"Reconnect Guard confirmed usable runtime during wait: {waitingDecision.Reason}");
-                    AnnounceManagedReconnectSuccess();
-                    StopManagedReconnect("client connected during wait");
-                    yield break;
-                }
-
-                if (waitingDecision.Action == ReconnectRuntimeHealthAction.ReturnToMenu)
-                {
-                    Log.LogWarning($"Reconnect Guard could not confirm a usable runtime during wait: {waitingDecision.Reason}");
-                    StopManagedReconnect(waitingDecision.Reason);
-                    HandleReconnectFailureFallback(waitingDecision.Reason);
-                    yield break;
-                }
-            }
-        }
-
-        StopManagedReconnect($"max attempts reached ({maxAttempts})");
-        HandleReconnectFailureFallback($"max attempts reached ({maxAttempts})");
-    }
-
     private void TryCaptureReconnectLobbyCode()
     {
         try
@@ -7055,7 +7341,7 @@ public sealed partial class Plugin : BaseUnityPlugin
             return;
         }
 
-        AddLocalNotificationWithToast("BlueSage reconnect could not confirm a usable lobby; returning to menu.");
+        AddLocalNotificationWithToast(ReconnectLobbyNotFoundNotice);
         ReturnToMenuAfterFailedReconnectCore();
     }
 
@@ -7077,50 +7363,6 @@ public sealed partial class Plugin : BaseUnityPlugin
         return true;
     }
 
-    private IEnumerator LastLobbyRejoinFallbackWait()
-    {
-        Log.LogWarning("Reconnect Guard last-lobby rejoin attempted; waiting before menu fallback.");
-        float connectedSince = -1f;
-        float waited = 0f;
-        float maxWaitSeconds = LockedReconnectRetryIntervalSeconds + LockedReconnectPostConnectValidationSeconds;
-
-        while (waited < maxWaitSeconds)
-        {
-            yield return null;
-            waited += Time.unscaledDeltaTime;
-
-            bool clientConnected = IsNetworkClientConnected();
-            if (clientConnected && connectedSince < 0f)
-            {
-                connectedSince = Time.unscaledTime;
-            }
-            else if (!clientConnected)
-            {
-                connectedSince = -1f;
-            }
-
-            ReconnectRuntimeHealthDecision decision = EvaluateManagedReconnectRuntime(connectedSince);
-            if (decision.Action == ReconnectRuntimeHealthAction.ConfirmSuccess)
-            {
-                Log.LogWarning($"Reconnect Guard confirmed usable runtime after last-lobby rejoin: {decision.Reason}");
-                AnnounceManagedReconnectSuccess();
-                _lastLobbyRejoinInProgress = false;
-                _lastLobbyRejoinFallbackCoroutine = null;
-                yield break;
-            }
-        }
-
-        _lastLobbyRejoinInProgress = false;
-        _lastLobbyRejoinFallbackCoroutine = null;
-        if (TryStartReplacementLobbyDiscovery())
-        {
-            yield break;
-        }
-
-        AddLocalNotificationWithToast("BlueSage reconnect could not rejoin the last lobby; returning to menu.");
-        ReturnToMenuAfterFailedReconnectCore();
-    }
-
     private bool TryStartReplacementLobbyDiscovery()
     {
         if (_replacementLobbyDiscoveryAttempted ||
@@ -7133,7 +7375,7 @@ public sealed partial class Plugin : BaseUnityPlugin
         _replacementLobbyDiscoveryAttempted = true;
         _lastLobbyRejoinInProgress = true;
         _replacementLobbyDiscoveryCoroutine = StartCoroutine(ReplacementLobbyDiscoveryLoop());
-        AddLocalNotificationWithToast("BlueSage reconnect is checking whether the same host re-created the public lobby.");
+        AddLocalNotificationWithToast(ReconnectSearchingNotice);
         return true;
     }
 
@@ -7182,7 +7424,7 @@ public sealed partial class Plugin : BaseUnityPlugin
                 _lastLobbyRejoinInProgress = false;
                 _replacementLobbyDiscoveryCoroutine = null;
                 Log.LogWarning("Reconnect Guard found one validated replacement lobby owned by the original host; starting one clean-menu join generation.");
-                AddLocalNotificationWithToast("BlueSage found the host's replacement lobby and is reconnecting.");
+                AddLocalNotificationWithToast(ReconnectFoundNewLobbyNotice);
                 StartCleanMenuReconnect("validated same-host replacement lobby discovered", nativeTeardownAlreadyStarting: false);
                 yield break;
             }
@@ -7196,7 +7438,7 @@ public sealed partial class Plugin : BaseUnityPlugin
 
         _lastLobbyRejoinInProgress = false;
         _replacementLobbyDiscoveryCoroutine = null;
-        AddLocalNotificationWithToast("BlueSage could not uniquely validate a replacement lobby; returning to menu.");
+        AddLocalNotificationWithToast(ReconnectLobbyNotFoundNotice);
         ReturnToMenuAfterFailedReconnectCore();
     }
 
@@ -7511,11 +7753,66 @@ public sealed partial class Plugin : BaseUnityPlugin
             Log.LogWarning($"Reconnect Guard stopped: {reason}.");
         }
 
+        MarkReconnectGuardIdle();
         _managedReconnectActive = false;
         _managedReconnectAttempt = 0;
         _lastManagedReconnectAttemptAt = -1f;
         _reconnectReadySampleCount = 0;
         _reconnectQuorumReadySince = -1f;
+    }
+
+    // Round 5b: generations are counted per saved lobby id. The count survives StopManagedReconnect and
+    // FinishCleanMenuReconnect on purpose (that reset was the loop) and is NOT cleared by the success confirmation
+    // (a rejoin that gets in for two seconds and drops again is the loop too). It clears when the saved lobby
+    // changes, or lazily on the next disconnect once the guard has been idle for LockedReconnectBudgetIdleResetSeconds
+    // (the player evidently had a working session in between, managed or manual).
+    private void NoteReconnectGenerationStarted()
+    {
+        if (!string.Equals(_reconnectBudgetLobbyCode, _lastReconnectLobbyCode, StringComparison.Ordinal))
+        {
+            _reconnectBudgetLobbyCode = _lastReconnectLobbyCode;
+            _reconnectBudgetGenerationsUsed = 0;
+        }
+
+        _reconnectBudgetGenerationsUsed++;
+        _reconnectBudgetIdleSince = -1f;
+        Log.LogInfo($"Reconnect Guard budget: generation {_reconnectBudgetGenerationsUsed}/{LockedReconnectMaxGenerationsPerLobby} for the saved lobby.");
+    }
+
+    private void MarkReconnectGuardIdle()
+    {
+        _reconnectBudgetIdleSince = Time.unscaledTime;
+    }
+
+    private float? GetSecondsSinceReconnectGuardIdle()
+    {
+        return _reconnectBudgetIdleSince < 0f ? (float?)null : Time.unscaledTime - _reconnectBudgetIdleSince;
+    }
+
+    private int GetReconnectGenerationsUsedForLobby(string lobbyCode)
+    {
+        if (string.IsNullOrEmpty(lobbyCode) || !string.Equals(_reconnectBudgetLobbyCode, lobbyCode, StringComparison.Ordinal))
+        {
+            return 0;
+        }
+
+        float? idleSeconds = GetSecondsSinceReconnectGuardIdle();
+        if (_reconnectBudgetGenerationsUsed > 0 && ReconnectGuardPolicy.BudgetClearsAfterIdle(idleSeconds, LockedReconnectBudgetIdleResetSeconds))
+        {
+            ResetReconnectBudget($"guard idle for {idleSeconds.Value:0}s");
+        }
+
+        return _reconnectBudgetGenerationsUsed;
+    }
+
+    private void ResetReconnectBudget(string reason)
+    {
+        if (_reconnectBudgetGenerationsUsed > 0)
+        {
+            Log.LogInfo($"Reconnect Guard budget reset after {_reconnectBudgetGenerationsUsed} generation(s): {reason}.");
+        }
+
+        _reconnectBudgetGenerationsUsed = 0;
     }
 
     private void AnnounceManagedReconnectSuccess()
@@ -7526,6 +7823,11 @@ public sealed partial class Plugin : BaseUnityPlugin
         }
 
         _managedReconnectSuccessAnnounced = true;
+        if (LockedReconnectShowNotifications)
+        {
+            // Every failure stage already toasts; the happy ending does too (round 5d).
+            ShowToast(ReconnectBackInNotice);
+        }
 
         if (!EnableReconnectAnnouncement.Value)
         {
@@ -7771,165 +8073,5 @@ public sealed partial class Plugin : BaseUnityPlugin
             Log?.LogWarning($"Reconnect Guard could not read visible lobby counts: {ex.GetType().Name}: {ex.Message}");
             return false;
         }
-    }
-
-    private static bool TryGetSteamLobbyCounts(CSteamID? lobbyId, out int? memberCount, out int? maxPlayers)
-    {
-        memberCount = null;
-        maxPlayers = null;
-
-        try
-        {
-            if (!lobbyId.HasValue || (ulong)lobbyId.Value == 0UL)
-            {
-                return false;
-            }
-
-            int steamMembers = SteamMatchmaking.GetNumLobbyMembers(lobbyId.Value);
-            int steamLimit = SteamMatchmaking.GetLobbyMemberLimit(lobbyId.Value);
-            if (steamMembers > 0)
-            {
-                memberCount = steamMembers;
-            }
-
-            if (steamLimit > 0)
-            {
-                maxPlayers = steamLimit;
-            }
-
-            return memberCount.HasValue || maxPlayers.HasValue;
-        }
-        catch (Exception ex)
-        {
-            Log?.LogWarning($"Host Health could not read Steam lobby count/limit: {ex.GetType().Name}: {ex.Message}");
-            return false;
-        }
-    }
-
-    private static bool TryGetLobbySurfaceMetadata(CSteamID? lobbyId, out string title, out string tags, out string visibility)
-    {
-        title = "?";
-        tags = "?";
-        visibility = "?";
-        bool found = false;
-
-        try
-        {
-            MultiplayerManager multiplayerManager = MonoSingleton<MultiplayerManager>.I;
-            object lobbyManager = AccessTools.Field(typeof(MultiplayerManager), "_lobbyManager")?.GetValue(multiplayerManager);
-            object currentLobby = lobbyManager?.GetType().GetProperty("CurrentLobby")?.GetValue(lobbyManager, null);
-            if (currentLobby != null)
-            {
-                if (TryReadStringProperty(currentLobby, out string reflectedTitle, "Name", "Title", "LobbyName", "SessionName"))
-                {
-                    title = reflectedTitle;
-                    found = true;
-                }
-
-                if (TryReadStringProperty(currentLobby, out string reflectedTags, "Tags", "TagString", "SearchTags"))
-                {
-                    tags = reflectedTags;
-                    found = true;
-                }
-
-                if (TryReadStringProperty(currentLobby, out string reflectedVisibility, "Visibility", "LobbyType", "Type"))
-                {
-                    visibility = reflectedVisibility;
-                    found = true;
-                }
-                else if (TryReadBoolProperty(currentLobby, out bool isPublic, "IsPublic", "Public"))
-                {
-                    visibility = isPublic ? "public" : "private";
-                    found = true;
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Log?.LogWarning($"Host Health could not read reflected lobby surface metadata: {ex.GetType().Name}: {ex.Message}");
-        }
-
-        if (lobbyId.HasValue && (ulong)lobbyId.Value != 0UL)
-        {
-            title = FirstUseful(title, ReadLobbyData(lobbyId.Value, "name", "title", "lobby_name", "session_name"));
-            tags = FirstUseful(tags, ReadLobbyData(lobbyId.Value, "tags", "tag", "search_tags", "description"));
-            visibility = FirstUseful(visibility, ReadLobbyData(lobbyId.Value, "visibility", "public", "lobby_type", "type"));
-            found = found || title != "?" || tags != "?" || visibility != "?";
-        }
-
-        return found;
-    }
-
-    private static string ReadLobbyData(CSteamID lobbyId, params string[] keys)
-    {
-        foreach (string key in keys)
-        {
-            try
-            {
-                string value = SteamMatchmaking.GetLobbyData(lobbyId, key);
-                if (!string.IsNullOrWhiteSpace(value))
-                {
-                    return value;
-                }
-            }
-            catch
-            {
-            }
-        }
-
-        return "?";
-    }
-
-    private static bool TryReadStringProperty(object target, out string value, params string[] names)
-    {
-        value = string.Empty;
-        foreach (string name in names)
-        {
-            object raw = ReflectedMember.TryRead(target, name, out object member) ? member : null;
-            if (raw != null && !string.IsNullOrWhiteSpace(raw.ToString()))
-            {
-                value = raw.ToString();
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool TryReadBoolProperty(object target, out bool value, params string[] names)
-    {
-        value = false;
-        foreach (string name in names)
-        {
-            object raw = ReflectedMember.TryRead(target, name, out object member) ? member : null;
-            if (raw is bool boolValue)
-            {
-                value = boolValue;
-                return true;
-            }
-
-            if (raw != null && bool.TryParse(raw.ToString(), out bool parsed))
-            {
-                value = parsed;
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static string FirstUseful(string current, string candidate)
-    {
-        return current == "?" && !string.IsNullOrWhiteSpace(candidate) && candidate != "?" ? candidate : current;
-    }
-
-    private static string SanitizeDiagnosticValue(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return "?";
-        }
-
-        return value.Replace("\r", " ").Replace("\n", " ").Replace(";", ",").Trim();
     }
 }

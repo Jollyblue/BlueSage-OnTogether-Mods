@@ -40,12 +40,17 @@
     <Compile Include="..\src\Core\SupporterLedgerPolicy.cs" Link="Core\SupporterLedgerPolicy.cs" />
     <Compile Include="..\src\Data\SupporterLedger.g.cs" Link="Data\SupporterLedger.g.cs" />
     <Compile Include="..\src\Core\AuditSnapshotPolicy.cs" Link="Core\AuditSnapshotPolicy.cs" />
+    <Compile Include="..\src\Core\LocalFileBudgetPolicy.cs" Link="Core\LocalFileBudgetPolicy.cs" />
+    <Compile Include="..\src\Core\ModSuiteLayoutPolicy.cs" Link="Core\ModSuiteLayoutPolicy.cs" />
+    <Compile Include="..\src\ModSuiteStorage.cs" Link="ModSuiteStorage.cs" />
     <Compile Include="..\src\Core\AuditMirrorTransferBuffer.cs" Link="Core\AuditMirrorTransferBuffer.cs" />
     <Compile Include="..\src\Core\ChatReadabilityStylePolicy.cs" Link="Core\ChatReadabilityStylePolicy.cs" />
     <Compile Include="..\src\Core\ChatAccessibilityScalePolicy.cs" Link="Core\ChatAccessibilityScalePolicy.cs" />
     <Compile Include="..\src\Core\ChatFontSizePolicy.cs" Link="Core\ChatFontSizePolicy.cs" />
     <Compile Include="..\src\Core\ChatWindowHeightPolicy.cs" Link="Core\ChatWindowHeightPolicy.cs" />
     <Compile Include="..\src\Core\ChatHistoryLimitPolicy.cs" Link="Core\ChatHistoryLimitPolicy.cs" />
+    <Compile Include="..\src\Core\LocalChatRangePolicy.cs" Link="Core\LocalChatRangePolicy.cs" />
+    <Compile Include="..\src\Core\HiddenControlLinePolicy.cs" Link="Core\HiddenControlLinePolicy.cs" />
     <Compile Include="..\src\Core\PlayerRenderSaverPolicy.cs" Link="Core\PlayerRenderSaverPolicy.cs" />
     <Compile Include="..\src\Core\RichTextStyleBuilder.cs" Link="Core\RichTextStyleBuilder.cs" />
     <Compile Include="..\src\Core\StatusSuffixPolicy.cs" Link="Core\StatusSuffixPolicy.cs" />
@@ -69,8 +74,9 @@
     <Compile Include="..\src\Core\SweepSchedulePolicy.cs" Link="Core\SweepSchedulePolicy.cs" />
     <Compile Include="..\src\Core\NativeAssetSweepPolicy.cs" Link="Core\NativeAssetSweepPolicy.cs" />
     <Compile Include="..\src\Core\SweepOperationGate.cs" Link="Core\SweepOperationGate.cs" />
-    <Compile Include="..\src\Core\SweepResourceEvidence.cs" Link="Core\SweepResourceEvidence.cs" />
-    <Compile Include="..\src\Core\SweepSessionEvidence.cs" Link="Core\SweepSessionEvidence.cs" />
+    <Compile Include="..\src\Core\AutosaveBoundaryPolicy.cs" Link="Core\AutosaveBoundaryPolicy.cs" />
+    <Compile Include="..\src\Core\WorkRelaxLedgerSavePolicy.cs" Link="Core\WorkRelaxLedgerSavePolicy.cs" />
+    <Compile Include="..\src\Core\WorkRelaxLedgerCompactionPolicy.cs" Link="Core\WorkRelaxLedgerCompactionPolicy.cs" />
     <Compile Include="..\src\Core\TimestampFormatter.cs" Link="Core\TimestampFormatter.cs" />
     <Compile Include="..\src\Core\RescueProtocolPolicy.cs" Link="Core\RescueProtocolPolicy.cs" />
     <Compile Include="..\src\Core\RescueFollowLeasePolicy.cs" Link="Core\RescueFollowLeasePolicy.cs" />
@@ -85,6 +91,7 @@
     <Compile Include="..\src\Core\CommunityBanSyncPolicy.cs" Link="Core\CommunityBanSyncPolicy.cs" />
     <Compile Include="..\src\Core\UnlimitedConsumablesPolicy.cs" Link="Core\UnlimitedConsumablesPolicy.cs" />
     <Compile Include="..\src\Core\ModerationCapabilityPolicy.cs" Link="Core\ModerationCapabilityPolicy.cs" />
+    <Compile Include="..\src\Core\NetworkCarriedRequestPolicy.cs" Link="Core\NetworkCarriedRequestPolicy.cs" />
     <Compile Include="..\src\Core\RoleLabelProtocolPolicy.cs" Link="Core\RoleLabelProtocolPolicy.cs" />
     <Compile Include="..\src\Core\PlayerHostLabelDisplayPolicy.cs" Link="Core\PlayerHostLabelDisplayPolicy.cs" />
     <Compile Include="..\src\Core\PlayerRoleLabelCompositionPolicy.cs" Link="Core\PlayerRoleLabelCompositionPolicy.cs" />
@@ -102,6 +109,7 @@
     <Compile Include="..\src\Core\ClientCapabilitySnapshotController.cs" Link="Core\ClientCapabilitySnapshotController.cs" />
     <Compile Include="..\src\Core\BlueSageExtensionContracts.cs" Link="Core\BlueSageExtensionContracts.cs" />
     <Compile Include="..\src\Core\BlueSageExtensionRegistryCore.cs" Link="Core\BlueSageExtensionRegistryCore.cs" />
+    <Compile Include="..\src\Core\HostAuthorityRegistryKeyPolicy.cs" Link="Core\HostAuthorityRegistryKeyPolicy.cs" />
     <Compile Include="..\src\Core\CloneIncidentLedger.cs" Link="Core\CloneIncidentLedger.cs" />
     <Compile Include="..\src\Core\CloneIncidentMessagePolicy.cs" Link="Core\CloneIncidentMessagePolicy.cs" />
     <Compile Include="..\src\Core\CloneIncidentResolutionProtocolPolicy.cs" Link="Core\CloneIncidentResolutionProtocolPolicy.cs" />
@@ -117,10 +125,21 @@
     <Compile Include="..\src\Core\LargeLobbyRefreshPolicy.cs" Link="Core\LargeLobbyRefreshPolicy.cs" />
     <Compile Include="..\src\Core\MiniMapFriendVisualPolicy.cs" Link="Core\MiniMapFriendVisualPolicy.cs" />
     <Compile Include="..\src\Core\IdentityCoverageLogPolicy.cs" Link="Core\IdentityCoverageLogPolicy.cs" />
+    <Compile Include="..\src\Core\JournalMoodFaceResolutionPolicy.cs" Link="Core\JournalMoodFaceResolutionPolicy.cs" />
+    <Compile Include="..\src\Core\CreatorContributionFreshnessPolicy.cs" Link="Core\CreatorContributionFreshnessPolicy.cs" />
+    <Compile Include="..\src\Core\StableStateLogPolicy.cs" Link="Core\StableStateLogPolicy.cs" />
+    <Compile Include="..\src\Core\HostHealthHeartbeatLogPolicy.cs" Link="Core\HostHealthHeartbeatLogPolicy.cs" />
+    <Compile Include="..\src\Core\SessionSummaryPolicy.cs" Link="Core\SessionSummaryPolicy.cs" />
+    <Compile Include="..\src\Core\SweepMemoryReadingPolicy.cs" Link="Core\SweepMemoryReadingPolicy.cs" />
+    <Compile Include="..\src\Core\WorkRelaxLedgerCoalescingPolicy.cs" Link="Core\WorkRelaxLedgerCoalescingPolicy.cs" />
+    <Compile Include="..\src\Core\WorkRelaxLedgerCompactionSchedulePolicy.cs" Link="Core\WorkRelaxLedgerCompactionSchedulePolicy.cs" />
+    <Compile Include="..\src\Core\ReportIconPolicy.cs" Link="Core\ReportIconPolicy.cs" />
     <Compile Include="..\src\Core\NativeIdCardResolutionPolicy.cs" Link="Core\NativeIdCardResolutionPolicy.cs" />
     <Compile Include="..\src\Core\SteamIdTruthPolicy.cs" Link="Core\SteamIdTruthPolicy.cs" />
     <Compile Include="..\src\Core\LobbyAnnouncementPolicy.cs" Link="Core\LobbyAnnouncementPolicy.cs" />
     <Compile Include="..\src\Core\GuideOverlayPolicy.cs" Link="Core\GuideOverlayPolicy.cs" />
+    <Compile Include="..\src\Core\OutfitSlotsHintPolicy.cs" Link="Core\OutfitSlotsHintPolicy.cs" />
+    <Compile Include="..\src\Core\CommandToastPolicy.cs" Link="Core\CommandToastPolicy.cs" />
     <Compile Include="..\src\Core\FlyCameraPolicy.cs" Link="Core\FlyCameraPolicy.cs" />
     <Compile Include="..\src\Core\WelcomeLobbyKeyPolicy.cs" Link="Core\WelcomeLobbyKeyPolicy.cs" />
     <Compile Include="..\src\Core\FishingAidPolicy.cs" Link="Core\FishingAidPolicy.cs" />
@@ -166,6 +185,22 @@
     <Compile Include="..\src\Core\ReconnectRejoinHoldPolicy.cs" Link="Core\ReconnectRejoinHoldPolicy.cs" />
     <Compile Include="..\src\Core\TextFocusBlurPolicy.cs" Link="Core\TextFocusBlurPolicy.cs" />
     <Compile Include="..\src\Core\ToastPolicy.cs" Link="Core\ToastPolicy.cs" />
+    <Compile Include="..\src\Core\AvatarSlotWriteGuardPolicy.cs" Link="Core\AvatarSlotWriteGuardPolicy.cs" />
+    <Compile Include="..\src\Core\AvatarSlotStoreFormat.cs" Link="Core\AvatarSlotStoreFormat.cs" />
+    <Compile Include="..\src\Core\LegacyConfigReimportPolicy.cs" Link="Core\LegacyConfigReimportPolicy.cs" />
+    <Compile Include="..\src\Core\AvatarSlotStoreNoticePolicy.cs" Link="Core\AvatarSlotStoreNoticePolicy.cs" />
+    <Compile Include="..\src\AvatarSlotStore.cs" Link="AvatarSlotStore.cs" />
+    <Compile Include="..\src\Core\OtherQolModNoticePolicy.cs" Link="Core\OtherQolModNoticePolicy.cs" />
+    <Compile Include="..\src\Core\NativeLookupCooldownPolicy.cs" Link="Core\NativeLookupCooldownPolicy.cs" />
+    <Compile Include="..\src\Core\NativeIdCardReadOnlyFallbackPolicy.cs" Link="Core\NativeIdCardReadOnlyFallbackPolicy.cs" />
+    <Compile Include="..\src\Core\BanTargetPresencePolicy.cs" Link="Core\BanTargetPresencePolicy.cs" />
+    <Compile Include="..\src\Core\NativeBanRoutePolicy.cs" Link="Core\NativeBanRoutePolicy.cs" />
+    <Compile Include="..\src\Core\HostJournal.cs" Link="Core\HostJournal.cs" />
+    <Compile Include="..\src\Core\HostJournalBoxPolicy.cs" Link="Core\HostJournalBoxPolicy.cs" />
+    <Compile Include="..\src\Core\IdentityAutoRefreshPolicy.cs" Link="Core\IdentityAutoRefreshPolicy.cs" />
+    <Compile Include="..\src\Core\KickFollowUpPolicy.cs" Link="Core\KickFollowUpPolicy.cs" />
+    <Compile Include="..\src\Core\LobbyMutePolicy.cs" Link="Core\LobbyMutePolicy.cs" />
+    <Compile Include="..\src\HostJournalFile.cs" Link="HostJournalFile.cs" />
     <Compile Include="..\src\Core\WelcomeOverlayPolicy.cs" Link="Core\WelcomeOverlayPolicy.cs" />
   </ItemGroup>
 </Project>

@@ -49,7 +49,7 @@ public sealed class WorkRelaxCommandIntegrationTests
     [TestCase("/workoff", 2)]
     [TestCase("/mode work", 1)]
     [TestCase("/mode relax", 2)]
-    public void RegisteredCommand_WhenAlreadySelected_IsHandledWithoutWriteOrMessage(
+    public void RegisteredCommand_WhenAlreadySelected_IsHandledWithoutWriteAndSaysSo(
         string input,
         int initialValue)
     {
@@ -71,7 +71,7 @@ public sealed class WorkRelaxCommandIntegrationTests
         {
             Assert.That(result.Handled, Is.True, "idempotent commands are still consumed locally");
             Assert.That(writes, Is.Zero);
-            Assert.That(result.Messages, Is.Empty);
+            Assert.That(result.Messages, Is.EqualTo(new[] { $"You're already in {initial} mode." }));
         });
     }
 
@@ -118,7 +118,7 @@ public sealed class WorkRelaxCommandIntegrationTests
         Assert.Multiple(() =>
         {
             Assert.That(result.Handled, Is.True);
-            Assert.That(result.Messages, Is.EqualTo(new[] { "Mode is waiting for local statistics." }));
+            Assert.That(result.Messages, Is.EqualTo(new[] { "Work/Relax isn't ready yet. Try again in a few seconds." }));
         });
     }
 }

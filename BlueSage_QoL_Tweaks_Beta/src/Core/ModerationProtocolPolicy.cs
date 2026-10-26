@@ -44,9 +44,16 @@ internal static class ModerationProtocolPolicy
         return Prefix + action + ":" + targetSteamId + ":" + NormalizeIncident(incidentId) + ":" + issuedUnixSeconds + ":" + nonce;
     }
 
+    // Round 4 Stage E #3: kick, mute and unmute join ban and unban. Hosts on an older build fail to parse the new
+    // actions and ignore them (no action, no reply), so a Helper is never told an unknown action worked.
+    internal static bool IsModerationAction(string action)
+    {
+        return action == "ban" || action == "unban" || action == "kick" || action == "mute" || action == "unmute";
+    }
+
     internal static string BuildMemberData(string action, string targetSteamId, string incidentId, long issuedUnixSeconds, string nonce)
     {
-        if ((action != "ban" && action != "unban") || !IsSteamId64(targetSteamId) ||
+        if (!IsModerationAction(action) || !IsSteamId64(targetSteamId) ||
             !IsIncident(NormalizeIncident(incidentId)) || issuedUnixSeconds <= 0 || !IsNonce(nonce)) return string.Empty;
         return MemberDataPrefix + action + "|" + targetSteamId + "|" + NormalizeIncident(incidentId) + "|" + issuedUnixSeconds + "|" + nonce;
     }
@@ -68,7 +75,7 @@ internal static class ModerationProtocolPolicy
         }
 
         string[] parts = text.Substring(Prefix.Length).Split(':');
-        if (parts.Length != 5 || (parts[0] != "ban" && parts[0] != "unban"))
+        if (parts.Length != 5 || !IsModerationAction(parts[0]))
         {
             return false;
         }

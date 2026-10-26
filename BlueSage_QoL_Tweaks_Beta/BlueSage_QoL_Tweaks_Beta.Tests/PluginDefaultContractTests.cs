@@ -11,7 +11,8 @@ public sealed class PluginDefaultContractTests
     {
         string readmeSource = File.ReadAllText(Path.Combine(FindProjectRoot(), "README.md"));
 
-        Assert.That(readmeSource, Does.Contain("Automatic Cleanup starts on and runs every 15 minutes"));
+        Assert.That(readmeSource, Does.Contain("Automatic Cleanup starts on and runs every 40 minutes"));
+        Assert.That(readmeSource, Does.Contain("never right before or after the game's own 3-minute autosave"), "Round 4 Stage G: the autosave guard is player-visible behaviour");
         Assert.That(readmeSource, Does.Contain("turn it off or choose 5–180 minutes"));
         Assert.That(readmeSource, Does.Contain("leaves the game's own cleanup alone"));
         Assert.That(readmeSource, Does.Not.Contain("fallback only when the game does not own cleanup"));
@@ -25,9 +26,9 @@ public sealed class PluginDefaultContractTests
         string pluginSource = File.ReadAllText(Path.Combine(FindProjectRoot(), "src", "Plugin.cs"));
         string navigationSource = File.ReadAllText(Path.Combine(FindProjectRoot(), "src", "Core", "NavigationCalloutPolicy.cs"));
 
-        Assert.That(pluginSource, Does.Contain("public const string PluginVersion = \"0.2.5\""));
-        Assert.That(pluginSource, Does.Contain("public const string PluginDisplayVersion = \"0.2.5\""));
-        Assert.That(pluginSource, Does.Contain("public const string PluginReleaseDate = \"2026-10-18\""));
+        Assert.That(pluginSource, Does.Contain("public const string PluginVersion = \"0.2.7\""));
+        Assert.That(pluginSource, Does.Contain("public const string PluginDisplayVersion = \"0.2.7\""));
+        Assert.That(pluginSource, Does.Contain("public const string PluginReleaseDate = \"2026-10-25\""));
         Assert.That(pluginSource, Does.Not.Contain("ConfigMigrationTarget = PluginVersion +"));
         Assert.That(pluginSource, Does.Contain("ConfigMigrationPolicy.RecordMigration"));
         Assert.That(pluginSource, Does.Contain("ConfigMigrationVersion"));
@@ -64,15 +65,13 @@ public sealed class PluginDefaultContractTests
         Assert.That(pluginSource, Does.Contain("AutoDisableSweepWhenAndrewSweepInstalled = Config.Bind(\"Asset Sweep\", \"AutoDisableSweepWhenAndrewSweepInstalled\", true"));
         Assert.That(pluginSource, Does.Contain("SweepIntervalMinutes = Config.Bind(\"Asset Sweep\", \"SweepIntervalMinutes\", SweepSettingsPolicy.DefaultIntervalMinutes"));
         Assert.That(pluginSource, Does.Contain("Used only when BlueSage Automatic Cleanup is explicitly enabled"));
-        Assert.That(pluginSource, Does.Contain("SweepSettingsPolicy.ResolveStartupIntervalMinutes(SweepIntervalMinutes.Value, freshInstall, sweepDefaultsMigrated, sweepTenMinuteSafetyMigrated)"));
+        Assert.That(pluginSource, Does.Contain("SweepSettingsPolicy.ResolveStartupIntervalMinutes(SweepIntervalMinutes.Value, freshInstall, sweepDefaultsMigrated, sweepTenMinuteSafetyMigrated, sweepOverlapAvoidanceMigrated)"));
         Assert.That(pluginSource, Does.Contain("MigrateAutomaticCleanupOptIn(EnableAutoSweep.Value, sweepAutomaticOptInMigrated)"));
         Assert.That(File.ReadAllText(Path.Combine(FindProjectRoot(), "src", "Core", "SweepSettingsPolicy.cs")), Does.Contain("MigrateTenMinuteSafetyInterval(migrated, tenMinuteSafetyMigrated)"));
         Assert.That(pluginSource, Does.Not.Contain("MigrateTenMinuteSafetyInterval(migrated, sweepAutomaticOptInMigrated)"));
         Assert.That(pluginSource, Does.Contain("EnableReconnectGuard = Config.Bind(\"Reconnect Guard\", \"EnableReconnectGuard\", true"));
-        Assert.That(pluginSource, Does.Contain("EnableHiddenDiagnostics = Config.Bind(\"Developer\", \"EnableHiddenDiagnostics\", false"));
-        Assert.That(pluginSource, Does.Contain("ShouldEmitHiddenDiagnostics =>"));
-        Assert.That(pluginSource, Does.Contain("EnableHiddenDiagnostics != null &&"));
-        Assert.That(pluginSource, Does.Contain("EnableHiddenDiagnostics.Value;"));
+        // Round 4 WS2: /bluedevdebug and its hidden diagnostics config are removed.
+        Assert.That(pluginSource, Does.Not.Contain("EnableHiddenDiagnostics"));
         Assert.That(pluginSource, Does.Not.Contain("Locked on through 0.2.x"));
         Assert.That(pluginSource, Does.Not.Contain("/bluedevdebug off cannot disable this release"));
         Assert.That(pluginSource, Does.Contain("StartCoroutine(DelayedReconnectAnnouncement(message))"));
@@ -157,17 +156,14 @@ public sealed class PluginDefaultContractTests
         Assert.That(pluginSource, Does.Contain("Lower it if very long chat lines wrap oddly"));
         Assert.That(pluginSource, Does.Contain("HandleToggleCommand"));
         Assert.That(pluginSource, Does.Contain("HandleOutgoingChatCommand"));
-        Assert.That(pluginSource, Does.Contain("HandleHiddenDiagnosticsCommand"));
+        Assert.That(pluginSource, Does.Not.Contain("HandleHiddenDiagnosticsCommand"));
         Assert.That(pluginSource, Does.Contain("BuildBlueSageClueCommandName"));
         Assert.That(pluginSource, Does.Contain("HandleBlueSageClueCommand"));
         Assert.That(pluginSource, Does.Contain("found a Clue"));
         Assert.That(pluginSource, Does.Contain("@jollyblue"));
         Assert.That(pluginSource, Does.Contain("CaptureHostHealthInput(out CSteamID? lobbyId, out string[] playerSteamIds)"));
-        Assert.That(pluginSource, Does.Contain("TryGetSteamLobbyCounts(lobbyId, out int? steamLobbyMembers, out int? steamLobbyLimit)"));
-        Assert.That(pluginSource, Does.Contain("SteamMatchmaking.GetNumLobbyMembers(lobbyId.Value)"));
-        Assert.That(pluginSource, Does.Contain("SteamMatchmaking.GetLobbyMemberLimit(lobbyId.Value)"));
-        Assert.That(pluginSource, Does.Contain("steamLobbyMembers={FormatNullableCount(steamLobbyMembers)}"));
-        Assert.That(pluginSource, Does.Contain("steamLobbyLimit={FormatNullableCount(steamLobbyLimit)}"));
+        // Round 4 WS2: the hidden diagnostic snapshot (and its Steam lobby count line) is removed.
+        Assert.That(pluginSource, Does.Not.Contain("TryGetSteamLobbyCounts"));
 
         Assert.That(pluginSource, Does.Not.Contain("/diag"));
 

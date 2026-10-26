@@ -48,6 +48,12 @@ internal static class ChatCopyMessagePatch
         bool sendByPlayer,
         ChatRowCreationSnapshot __state)
     {
+        // A hidden control line is not player speech: it is neither copyable nor written to the audit log.
+        if (HiddenControlLinePolicy.IsHiddenControlLine(text))
+        {
+            return;
+        }
+
         // `sendByPlayer` distinguishes local echo from received-channel rendering;
         // it does not determine whether the enclosing RPC has an exact sender tuple.
         AuthoritativeChatSenderContext senderContext =

@@ -18,6 +18,8 @@ internal enum HostHealthAction
 {
     RefreshLobbyMetadata,
     RequestPersonaRefresh,
+    // Round 5b: tell the host once per streak that Steam dropped the lobby (joins fail, host tools lock).
+    NotifyHostLobbyLost,
 }
 
 internal sealed class HostHealthInput
@@ -122,6 +124,7 @@ internal static class HostHealthPolicy
         if (lobbyOwnerInvalid)
         {
             issues.Add(HostHealthIssue.LobbyOwnerInvalid);
+            actions.Add(HostHealthAction.NotifyHostLobbyLost);
         }
 
         if (!lobbyOwnerInvalid && !input.PlayerSteamIds.Contains(input.LobbyOwnerSteamId))

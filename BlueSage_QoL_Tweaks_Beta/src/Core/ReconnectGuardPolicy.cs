@@ -20,17 +20,26 @@ internal sealed class ReconnectGuardDecision
     }
 
     public ReconnectGuardDecision(ReconnectGuardAction action, string reason, int recommendedAttemptIntervalSeconds, int recommendedMaxAttempts)
+        : this(action, reason, recommendedAttemptIntervalSeconds, recommendedMaxAttempts, false)
+    {
+    }
+
+    public ReconnectGuardDecision(ReconnectGuardAction action, string reason, int recommendedAttemptIntervalSeconds, int recommendedMaxAttempts, bool budgetSpent)
     {
         Action = action;
         Reason = reason;
         RecommendedAttemptIntervalSeconds = recommendedAttemptIntervalSeconds;
         RecommendedMaxAttempts = recommendedMaxAttempts;
+        BudgetSpent = budgetSpent;
     }
 
     public ReconnectGuardAction Action { get; }
     public string Reason { get; }
     public int RecommendedAttemptIntervalSeconds { get; }
     public int RecommendedMaxAttempts { get; }
+
+    // Round 5b: true only when the per-lobby generation budget stopped the guard; the plugin shows one notice.
+    public bool BudgetSpent { get; }
 }
 
 internal sealed class ReconnectGuardInput
@@ -52,7 +61,11 @@ internal sealed class ReconnectGuardInput
         float? secondsSinceLastManagedAttempt,
         int reconnectAttempt,
         int? visibleLobbyMemberCount,
-        int? visibleLobbyMaxPlayers)
+        int? visibleLobbyMaxPlayers,
+        int lobbyGenerationsUsed = 0,
+        int maxGenerationsPerLobby = DefaultMaxGenerationsPerLobby,
+        float? secondsSinceLastGuardActivity = null,
+        int budgetIdleResetSeconds = DefaultBudgetIdleResetSeconds)
     {
         GuardEnabled = guardEnabled;
         ReconnectLoaded = reconnectLoaded;
@@ -71,7 +84,22 @@ internal sealed class ReconnectGuardInput
         ReconnectAttempt = reconnectAttempt;
         VisibleLobbyMemberCount = visibleLobbyMemberCount;
         VisibleLobbyMaxPlayers = visibleLobbyMaxPlayers;
+        LobbyGenerationsUsed = lobbyGenerationsUsed;
+        MaxGenerationsPerLobby = maxGenerationsPerLobby;
+        SecondsSinceLastGuardActivity = secondsSinceLastGuardActivity;
+        BudgetIdleResetSeconds = budgetIdleResetSeconds;
     }
+
+    // Round 5b (2026-10-23): guarded rejoins are budgeted per saved lobby. Inside one generation the guard was
+    // already bounded; across generations it was not, and a host whose process and PurrNet outlived its Steam
+    // lobby made every guest rejoin, drop with HostLost and start again.
+    public const int DefaultMaxGenerationsPerLobby = 5;
+
+    // The budget clears only after the guard has been idle this long (no generation running or finishing, no
+    // budget stop). A rejoin that "gets in" for a few seconds and drops again therefore keeps counting (the
+    // reviewer's case 1), while a manual rejoin that then plays for two minutes earns the lobby a fresh budget
+    // on its next drop (case 2). Never cleared on the success confirmation itself.
+    public const int DefaultBudgetIdleResetSeconds = 120;
 
     public bool GuardEnabled { get; }
     public bool ReconnectLoaded { get; }
@@ -90,6 +118,10 @@ internal sealed class ReconnectGuardInput
     public int ReconnectAttempt { get; }
     public int? VisibleLobbyMemberCount { get; }
     public int? VisibleLobbyMaxPlayers { get; }
+    public int LobbyGenerationsUsed { get; }
+    public int MaxGenerationsPerLobby { get; }
+    public float? SecondsSinceLastGuardActivity { get; }
+    public int BudgetIdleResetSeconds { get; }
 
     public static ReconnectGuardInput DefaultForTests(
         bool guardEnabled = true,
@@ -108,7 +140,11 @@ internal sealed class ReconnectGuardInput
         float? secondsSinceLastManagedAttempt = null,
         int reconnectAttempt = 1,
         int? visibleLobbyMemberCount = 1,
-        int? visibleLobbyMaxPlayers = 128)
+        int? visibleLobbyMaxPlayers = 128,
+        int lobbyGenerationsUsed = 0,
+        int maxGenerationsPerLobby = DefaultMaxGenerationsPerLobby,
+        float? secondsSinceLastGuardActivity = null,
+        int budgetIdleResetSeconds = DefaultBudgetIdleResetSeconds)
     {
         return new ReconnectGuardInput(
             guardEnabled,
@@ -127,7 +163,11 @@ internal sealed class ReconnectGuardInput
             secondsSinceLastManagedAttempt,
             reconnectAttempt,
             visibleLobbyMemberCount,
-            visibleLobbyMaxPlayers);
+            visibleLobbyMaxPlayers,
+            lobbyGenerationsUsed,
+            maxGenerationsPerLobby,
+            secondsSinceLastGuardActivity,
+            budgetIdleResetSeconds);
     }
 }
 
@@ -166,6 +206,20 @@ internal static class ReconnectGuardPolicy
         if (input.SuppressHostKickReconnect && LooksLikeHostKick(input.NotificationStatusName))
         {
             return Noop($"Host kick style disconnect ({input.NotificationStatusName}) detected; not auto reconnecting because the host may have removed this client intentionally.", intervalSeconds, maxAttempts);
+        }
+
+        // Round 5b: the per-lobby budget. Checked after the kick rule (a kicked player never hears "stopped after
+        // 5 tries" for a rejoin that was never attempted) and before any schedule/run decision.
+        int maxGenerations = ClampSeconds(input.MaxGenerationsPerLobby, 1, 10);
+        int generationsUsed = BudgetClearsAfterIdle(input.SecondsSinceLastGuardActivity, input.BudgetIdleResetSeconds) ? 0 : input.LobbyGenerationsUsed;
+        if (generationsUsed >= maxGenerations)
+        {
+            return new ReconnectGuardDecision(
+                ReconnectGuardAction.StopManagedRetry,
+                $"Reconnect budget for this lobby is spent ({generationsUsed}/{maxGenerations} guarded rejoins); not rejoining automatically. Rejoin from the menu when the host is back.",
+                intervalSeconds,
+                maxAttempts,
+                budgetSpent: true);
         }
 
         if (input.BlockDuringInitialLobbyGrace &&
@@ -228,6 +282,16 @@ internal static class ReconnectGuardPolicy
     private static ReconnectGuardDecision Stop(string reason, int intervalSeconds, int maxAttempts)
     {
         return new ReconnectGuardDecision(ReconnectGuardAction.StopManagedRetry, reason, intervalSeconds, maxAttempts);
+    }
+
+    // Round 5b: the per-lobby budget clears only after the guard has been idle this long (see
+    // ReconnectGuardInput.DefaultBudgetIdleResetSeconds). The plugin applies the same rule to its stored count.
+    public static bool BudgetClearsAfterIdle(float? secondsSinceLastGuardActivity, int budgetIdleResetSeconds)
+    {
+        int resetSeconds = ClampSeconds(budgetIdleResetSeconds, 30, 900);
+        return secondsSinceLastGuardActivity.HasValue &&
+               secondsSinceLastGuardActivity.Value >= 0f &&
+               secondsSinceLastGuardActivity.Value >= resetSeconds;
     }
 
     private static bool LooksLikeHostKick(string notificationStatusName)

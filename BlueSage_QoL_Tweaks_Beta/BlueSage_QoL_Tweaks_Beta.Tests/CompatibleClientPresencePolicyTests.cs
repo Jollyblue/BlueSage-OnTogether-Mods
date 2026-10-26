@@ -5,6 +5,41 @@ namespace BlueSage.QoLTweaks.Tests;
 
 public sealed class CompatibleClientPresencePolicyTests
 {
+    // Round 5c (Blue, 2026-10-23): "QoL vX.Y.Z User". The version travels on its own member-data key.
+    [Test]
+    public void Version_key_carries_a_plain_three_part_version_and_nothing_else()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(CompatibleClientPresencePolicy.VersionMemberDataKey, Is.EqualTo("bluesage_qol_client_version"));
+            Assert.That(CompatibleClientPresencePolicy.VersionMemberDataKey, Is.Not.EqualTo(CompatibleClientPresencePolicy.MemberDataKey), "The v1 heartbeat payload must stay exactly as 0.2.3-0.2.7 clients parse it.");
+            Assert.That(CompatibleClientPresencePolicy.TryBuildVersionPayload("0.2.7", out string payload), Is.True);
+            Assert.That(payload, Is.EqualTo("0.2.7"));
+            Assert.That(CompatibleClientPresencePolicy.TryParseVersion("0.2.7", out string parsed), Is.True);
+            Assert.That(parsed, Is.EqualTo("0.2.7"));
+            Assert.That(CompatibleClientPresencePolicy.TryParseVersion("1|1000", out _), Is.False, "A heartbeat payload is not a version.");
+            Assert.That(CompatibleClientPresencePolicy.TryParseVersion("0.2", out _), Is.False);
+            Assert.That(CompatibleClientPresencePolicy.TryParseVersion("0.2.7-rc1", out _), Is.False);
+            Assert.That(CompatibleClientPresencePolicy.TryParseVersion("", out _), Is.False);
+            Assert.That(CompatibleClientPresencePolicy.TryParseVersion(null, out _), Is.False);
+            Assert.That(CompatibleClientPresencePolicy.TryParseVersion("12345.12345.12345", out _), Is.False, "Over 16 characters is refused.");
+            Assert.That(CompatibleClientPresencePolicy.TryBuildVersionPayload("0.2.7+20261025.round5h-rc7", out _), Is.False, "Only PluginVersion goes on the wire, never the build identity.");
+        });
+    }
+
+    [Test]
+    public void Long_label_reads_the_peer_version_and_falls_back_to_older_for_peers_without_the_key()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(CompatibleClientPresencePolicy.LongLabel("0.2.7"), Is.EqualTo("QoL v0.2.7 User"));
+            Assert.That(CompatibleClientPresencePolicy.LongLabel("1.0.0"), Is.EqualTo("QoL v1.0.0 User"));
+            Assert.That(CompatibleClientPresencePolicy.LongLabel(string.Empty), Is.EqualTo("Pre-indicator QoL User"), "Blue's wording for 0.2.3-0.2.7 peers, which publish no version key.");
+            Assert.That(CompatibleClientPresencePolicy.LongLabel(null), Is.EqualTo("Pre-indicator QoL User"));
+            Assert.That(CompatibleClientPresencePolicy.LongLabel("garbage"), Is.EqualTo("Pre-indicator QoL User"));
+        });
+    }
+
     [Test]
     public void Current_protocol_heartbeat_round_trips_at_the_freshness_boundaries()
     {

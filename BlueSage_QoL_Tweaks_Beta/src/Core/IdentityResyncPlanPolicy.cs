@@ -55,7 +55,7 @@ internal static class IdentityResyncPlanPolicy
             normalizedName != "identitysync" &&
             normalizedName != "rostersync")
         {
-            return Denied("That command is not an identity-resync command.");
+            return Denied("That isn't a player matching command.");
         }
 
         string[] tokens = (arguments ?? string.Empty)
@@ -65,7 +65,7 @@ internal static class IdentityResyncPlanPolicy
             : tokens[0].Trim().ToLowerInvariant();
         if (tokens.Length > 1)
         {
-            return Denied("Identity resync accepts one operation only: status, refresh, repair, or request.");
+            return Denied("/idsync takes one word: status, refresh, repair, or request.");
         }
 
         if (action == "status" || action == "?" || action == "help")
@@ -75,7 +75,7 @@ internal static class IdentityResyncPlanPolicy
                 IdentityResyncAction.Status,
                 readOnly: true,
                 requiresAuthoritativeCapture: false,
-                "Read-only identity agreement status.");
+                "Show player matching status.");
         }
 
         if (action == "refresh")
@@ -85,7 +85,7 @@ internal static class IdentityResyncPlanPolicy
                 IdentityResyncAction.RefreshLocalSurfaces,
                 readOnly: false,
                 requiresAuthoritativeCapture: false,
-                "Refresh only BlueSage-owned local presentation from already available native state.");
+                "Redraw the player list from what the game already shows.");
         }
 
         if (action == "repair")
@@ -96,8 +96,8 @@ internal static class IdentityResyncPlanPolicy
                     IdentityResyncAction.RepairIncompleteRows,
                     readOnly: false,
                     requiresAuthoritativeCapture: true,
-                    "Verified current Host may run one bounded exact-correlation repair.")
-                : Denied("Direct identity repair requires the verified current Host.");
+                    "The host can recheck player matches once.")
+                : Denied("Only the lobby host can recheck player matches. An assigned Helper can use /idsync request to ask the host.");
         }
 
         if (action == "request")
@@ -108,14 +108,14 @@ internal static class IdentityResyncPlanPolicy
                     IdentityResyncAction.PublishHostRequest,
                     readOnly: false,
                     requiresAuthoritativeCapture: false,
-                    "Authenticated Helper may publish one generation-bound request for Host revalidation.")
+                    "An assigned Helper can ask the host to recheck player matches.")
                 : Denied(
                     access == IdentityResyncAccess.HelperWaitingForHost
-                        ? "Identity repair request is locked until the current Host capability is fresh."
-                        : "Identity repair request requires a Helper authenticated by the current Host.");
+                        ? "Your Helper access is still connecting to the host. Try again in a few seconds."
+                        : "Only an assigned Helper can ask the host to recheck player matches.");
         }
 
-        return Denied("Identity resync accepts status, refresh, repair, or request.");
+        return Denied("/idsync takes one word: status, refresh, repair, or request.");
     }
 
     private static IdentityResyncPlan Denied(string reason)

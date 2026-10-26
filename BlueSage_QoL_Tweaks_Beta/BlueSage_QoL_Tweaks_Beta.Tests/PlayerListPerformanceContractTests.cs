@@ -70,8 +70,9 @@ public sealed class PlayerListPerformanceContractTests
         Assert.Multiple(() =>
         {
             Assert.That(tooltip, Does.Contain("Steam Profile • LIVE / STEAM CHECK"));
-            Assert.That(tooltip, Does.Contain("Live game/PurrNet row; this SteamID is absent from current Steam lobby membership."));
-            Assert.That(tooltip, Does.Contain("Profile opens; identity-sensitive actions remain locked."));
+            Assert.That(tooltip, Does.Contain("Live in game, but missing from Steam's lobby list (usually an automatic reconnect)."));
+            // Round 4 WS3 (Blue: allow moderation always): reconnected rows are labeled, not locked.
+            Assert.That(tooltip, Does.Contain("Profile opens; host moderation works and is labeled RECONNECTED."));
             Assert.That(tooltip, Does.Not.Contain("revalidating"));
         });
     }
@@ -99,9 +100,9 @@ public sealed class PlayerListPerformanceContractTests
         Assert.Multiple(() =>
         {
             Assert.That(menu, Does.Contain("Click again to clear this player selection."));
-            Assert.That(menu, Does.Contain("Click again to clear this native-ban selection."));
+            Assert.That(menu, Does.Contain("Click again to clear this selection."));
             Assert.That(menu, Does.Contain("Deselect this native ban and disarm every selection-scoped unban control."));
-            Assert.That(menu, Does.Contain("No native ban is selected."));
+            Assert.That(menu, Does.Contain("No saved ban is selected."));
             Assert.That(menu, Does.Not.Contain("selected = records[start]"));
             Assert.That(menu, Does.Contain("ClearLobbySafetyTransientState();"));
             Assert.That(menu, Does.Contain("_selectedBannedSteamId = string.Empty;"));
@@ -123,14 +124,12 @@ public sealed class PlayerListPerformanceContractTests
             Assert.That(evidence, Does.Contain("RoleBySteamId.TryGetValue"));
             Assert.That(evidence, Does.Not.Contain("Role = BuildRole(lobby, steamId)"));
             Assert.That(moderation, Does.Contain("GetPublishedHelpers"));
-            Assert.That(panel, Does.Contain("buttonsLive="));
-            Assert.That(panel, Does.Contain("System.Threading.Interlocked"));
-            Assert.That(panel, Does.Contain("HierarchyDiagnosticMaximumEntries"));
-            Assert.That(panel, Does.Contain("LastHierarchyDiagnosticAt.Count"));
-            Assert.That(plugin, Does.Contain("BuildProcessMemoryDiagnosticSummary"));
-            Assert.That(plugin, Does.Contain("processMemory="));
-            Assert.That(plugin, Does.Contain("panelObjects="));
-            Assert.That(plugin, Does.Contain("chatState="));
+            // Round 4 R9: the buttonsLive/lanesLive counters fed only the removed hidden diagnostics.
+            Assert.That(panel, Does.Not.Contain("buttonsLive="));
+            Assert.That(panel, Does.Not.Contain("System.Threading.Interlocked"));
+            // Round 4 WS2: the hidden memory/hierarchy diagnostics are removed rather than bounded.
+            Assert.That(panel, Does.Not.Contain("HierarchyDiagnostic"));
+            Assert.That(plugin, Does.Not.Contain("BuildProcessMemoryDiagnosticSummary"));
         });
     }
 

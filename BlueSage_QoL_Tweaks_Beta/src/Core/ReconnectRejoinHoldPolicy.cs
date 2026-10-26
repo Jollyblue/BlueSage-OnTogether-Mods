@@ -60,7 +60,7 @@ internal static class ReconnectRejoinHoldPolicy
 
     internal static string BuildHoldNotice(int holdSeconds)
     {
-        return "BlueSage reconnect will rejoin in " + ClampHoldSeconds(holdSeconds) +
-               "s, giving the host time to clear your old connection so the lobby's player count stays correct.";
+        return "Reconnecting in " + ClampHoldSeconds(holdSeconds) +
+               "s so the host can clear your old spot first.";
     }
 }

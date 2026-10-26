@@ -70,6 +70,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
     private string _chatFontSizeText = string.Empty;
     private string _chatWindowHeightText = string.Empty;
     private string _chatHistoryRowsText = string.Empty;
+    private string _localChatRangeText = string.Empty;
     private string _chatOutlineColorText = string.Empty;
     private string _blackChatOutlineColorText = string.Empty;
     private string _chatLimitText = string.Empty;
@@ -94,6 +95,8 @@ internal sealed class QolMenuWindow : MonoBehaviour
     private bool _hostCardShowDetails;
     private int _selectedSupporterIndex;
     private Vector2 _contentScroll;
+    private Vector2 _hostJournalScroll;
+    private HostJournalBoxFilter _hostJournalFilter = HostJournalBoxFilter.Actions;
     private GUIStyle _windowStyle;
     private GUIStyle _headerBoxStyle;
     private GUIStyle _headerStyle;
@@ -126,7 +129,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
     private string _stateDetail = "Loaded saved menu values.";
     private readonly StatisticsPulseReader _statisticsPulseReader = new StatisticsPulseReader();
     private StatisticsPulseSnapshot _statisticsPulse;
-    private string _statisticsPulseUnavailableReason = "Native statistics have not been read yet.";
+    private string _statisticsPulseUnavailableReason = "Press Refresh to load the game's saved stats.";
     private string _statisticsPulseNote = "Achievements are counted only when you press Refresh.";
     private readonly Dictionary<string, string> _settingUndoValues = new Dictionary<string, string>(StringComparer.Ordinal);
 
@@ -152,7 +155,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
             _hasOpened = true;
             HydrateFields();
             RefreshStatisticsPulse(false);
-            MarkSaved("Loaded saved menu values. Edit Customize fields to start a draft.");
+            MarkSavedQuiet("Loaded saved menu values. Edit Customize fields to start a draft.");
         }
     }
 
@@ -316,7 +319,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         GUILayout.BeginHorizontal();
         DrawTabButton(0, "Main", "Fast actions, how-to examples, current feature status, and the quickest path to Style Helper.");
         DrawTabButton(1, "Toggles", "Turn major QoL features on/off with one normal On/Off button per row.");
-        DrawTabButton(2, "Customize", "Edit movement, ping, sweep, and text-limit settings. Names, status, and Spoons live in Style Helper.");
+        DrawTabButton(2, "Customize", "Edit movement, ping, cleanup, and text-limit settings. Names, status, and Spoons live in Style Helper.");
         DrawTabButton(3, "Credits / Other", "Themes, credits, community notes, and one optional lobby joke.");
         if (Plugin.ShouldShowLobbySafetyTab(out LobbySafetyAccessState accessState, out _))
         {
@@ -326,7 +329,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
                 ? "Host-only Helper management plus verified identities, Clone Shield evidence, and careful moderation actions."
                 : ready
                     ? "Assigned Helper access: verified identities, Clone Shield evidence, and host-validated actions."
-                    : "Helper assignment detected. Protected details stay locked until the host publishes a fresh compatible 0.2.0 Helper capability.");
+                    : "You're an assigned Helper here. Your tools unlock by themselves once the host's BlueSage answers.");
         }
         GUILayout.EndHorizontal();
     }
@@ -362,7 +365,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         if (cleanupRequested)
         {
             _message = Plugin.Instance != null ? Plugin.Instance.RunManualSweepFromQolMenu() : "Plugin is not ready.";
-            MarkAction("Run Cleanup Now requested.");
+            MarkActionQuiet("Run Cleanup Now requested.");
         }
         if (GUILayout.Button(new GUIContent("Run QoL Status", "Shows the same easy feature summary as /qol status so players can quickly see what is on or off."), _buttonStyle, GUILayout.Width(actionButtonWidth), GUILayout.Height(34f)))
         {
@@ -374,13 +377,13 @@ internal sealed class QolMenuWindow : MonoBehaviour
             {
                 _message = "Plugin is not ready.";
             }
-            MarkAction(_message);
+            MarkActionQuiet(_message);
         }
         bool styleHelperOpen = Plugin.IsStyleHelperVisible;
         if (GUILayout.Button(new GUIContent(styleHelperOpen ? "Close Style Helper" : "Open Style Helper", "Open or close Style Helper for name styling, status tags, templates, and Spoons."), styleHelperOpen ? _enabledButtonStyle : _buttonStyle, GUILayout.Width(actionButtonWidth), GUILayout.Height(34f)))
         {
             _message = Plugin.Instance != null ? Plugin.Instance.ToggleStyleUiFromQolMenu() : "Plugin is not ready.";
-            MarkAction("Style Helper toggled.");
+            MarkAction(_message);
         }
         GUILayout.EndHorizontal();
         GUILayout.Space(10f);
@@ -391,9 +394,9 @@ internal sealed class QolMenuWindow : MonoBehaviour
         GUILayout.Label("Getting started", _labelStyle);
         GUILayout.Label(NavigationCalloutPolicy.BuildMenuNavigationHint(_theme.NavigationKeywordHex, Plugin.QolMenuKey.Value.ToString(), Plugin.StyleMenuKey.Value.ToString()), _navigationHintStyle);
         GUILayout.Label("Use /styleui for name, status, and Spoons identity edits. Name Styler changes your visible name style; Status Styler changes only the activity tag and optional Spoons tag.", _smallStyle);
-        GUILayout.Label("Chat actions: plain left-click keeps the vanilla ID card. Ctrl-left-click copies message text. Shift-left-click a safe http/https link once to copy and warn, then repeat to open.", _smallStyle);
+        GUILayout.Label("Chat actions: plain left-click opens the game's ID card. Ctrl-left-click copies message text. Shift-left-click a safe http/https link once to copy and warn, then repeat to open.", _smallStyle);
         GUILayout.Label("Quick checks: /qol status or Run QoL Status shows enabled features. Type / in chat to browse commands with autocomplete.", _smallStyle);
-        GUILayout.Label("When something feels noisy: open Toggles and turn off only that feature. Use Customize for ping colors, ping sound, sweep timing, and text limits.", _smallStyle);
+        GUILayout.Label("When something feels noisy: open Toggles and turn off only that feature. Use Customize for ping colors, ping sound, cleanup timing, and text limits.", _smallStyle);
         GUILayout.Space(12f);
         DrawCommunityThanks();
         GUILayout.EndVertical();
@@ -439,14 +442,14 @@ internal sealed class QolMenuWindow : MonoBehaviour
 
     private void DrawFocusPulse()
     {
-        const string nativeReportTooltip = "The full achievement gallery remains in the native Report. Focus Pulse never opens or changes it.";
+        const string nativeReportTooltip = "The full achievement gallery is in the game's Report. Focus Pulse never opens or changes it.";
         GUILayout.Space(8f);
         GUILayout.BeginVertical(_identitySectionBoxStyle, GUILayout.ExpandWidth(true));
         GUILayout.BeginHorizontal();
         GUILayout.Label("Focus Pulse", _sectionHeaderStyle, GUILayout.ExpandWidth(true));
         if (GUILayout.Button(
                 new GUIContent(BlueSageReportSurfacePolicy.QolFallbackLabel,
-                    "Open the BlueSage Work / Relax view. The native Report remains unchanged."),
+                    "Open the BlueSage Report, your Work / Relax view. The game's Report stays as it is."),
                 _buttonStyle,
                 GUILayout.Width(190f),
                 GUILayout.Height(30f)))
@@ -455,22 +458,22 @@ internal sealed class QolMenuWindow : MonoBehaviour
             MarkAction("BlueSage Report opened.");
         }
         if (GUILayout.Button(
-                new GUIContent("Refresh", "Refresh these read-only values and count unlocked achievements once."),
+                new GUIContent("Refresh", "Reload these numbers from the game's saved stats and count your achievements once. Nothing is changed."),
                 _buttonStyle,
                 GUILayout.Width(112f),
                 GUILayout.Height(30f)))
         {
             RefreshStatisticsPulse(true);
             _message = _statisticsPulse != null
-                ? "Focus Pulse refreshed from the native statistics data."
-                : "Focus Pulse is unavailable on this game build.";
+                ? "Focus Pulse refreshed from the game's saved stats."
+                : "This game version doesn't share those stats.";
             MarkAction(_message);
         }
         GUILayout.EndHorizontal();
 
         if (_statisticsPulse == null)
         {
-            GUILayout.Label("Native statistics unavailable. " + _statisticsPulseUnavailableReason, _smallStyle);
+            GUILayout.Label("The game's saved stats can't be shown here. " + _statisticsPulseUnavailableReason, _smallStyle);
             GUILayout.Label(new GUIContent("Full Report - Open with ESC", nativeReportTooltip), _smallStyle);
             GUILayout.EndVertical();
             return;
@@ -518,7 +521,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         {
             _statisticsPulse = null;
             _statisticsPulseUnavailableReason = string.IsNullOrWhiteSpace(unavailableReason)
-                ? "This game build does not expose the expected read-only surface."
+                ? "This game version doesn't share those stats."
                 : unavailableReason;
             _statisticsPulseNote = "The rest of the QoL menu remains available.";
             return;
@@ -534,12 +537,12 @@ internal sealed class QolMenuWindow : MonoBehaviour
                 out achievementUnavailableReason))
         {
             snapshot = snapshot.WithAchievementProgress(unlocked, total);
-            _statisticsPulseNote = "Achievement progress refreshed once from the native gallery.";
+            _statisticsPulseNote = "Achievements counted once from the game's gallery.";
         }
         else if (includeAchievements)
         {
             _statisticsPulseNote = string.IsNullOrWhiteSpace(achievementUnavailableReason)
-                ? "Achievement progress is unavailable on this game build."
+                ? "This game version doesn't share achievement progress."
                 : achievementUnavailableReason;
         }
 
@@ -555,7 +558,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         {
             LobbySafetyAccessState.Host => "HOST  •  Helper management and Lobby Safety ready",
             LobbySafetyAccessState.HelperReady => "HELPER  •  Lobby Safety ready",
-            _ => "HELPER DETECTED  •  Waiting for compatible host capability"
+            _ => "Helper assigned  •  waiting for the host"
         };
 
         GUILayout.Space(8f);
@@ -563,13 +566,13 @@ internal sealed class QolMenuWindow : MonoBehaviour
         GUILayout.Label(status, _smallStyle, GUILayout.ExpandWidth(true));
         if (GUILayout.Button(new GUIContent("Open Helper / Safety", ready
                 ? "Open authorized Helper and Lobby Safety tools."
-                : "Open the access status. Protected player details and actions remain locked until the host publishes a fresh compatible v3 member-data capability."),
+                : "You're an assigned Helper here. Your tools unlock by themselves once the host's BlueSage answers."),
                 ready ? _enabledButtonStyle : _buttonStyle, GUILayout.Width(210f), GUILayout.Height(30f)))
         {
             _tab = 4;
             _contentScroll = Vector2.zero;
             _message = Plugin.Instance != null ? Plugin.Instance.CheckModerationAccessFromQolMenu() : "Helper / Safety is not ready yet.";
-            MarkAction(_message);
+            MarkActionQuiet(_message);
         }
         GUILayout.EndHorizontal();
     }
@@ -598,7 +601,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         _tab = 3;
         _contentScroll = Vector2.zero;
         _message = "Community Supporters opened in Credits / Other.";
-        MarkAction(_message);
+        MarkActionQuiet(_message);
     }
 
     private void DrawSupporterCredits()
@@ -670,7 +673,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         _message = _selectedSupporterIndex < 0
             ? "Community supporter details closed."
             : "Community supporter selected: " + SupporterRollups[index].Name + ".";
-        MarkAction(_message);
+        MarkActionQuiet(_message);
     }
 
     private void DrawSelectedSupporterMessages()
@@ -830,9 +833,9 @@ internal sealed class QolMenuWindow : MonoBehaviour
 
     private void DrawComfortMovementToggles()
     {
-        DrawToggle("Automatic Cleanup", Plugin.EnableAutoSweep, $"On for fresh installs at a user-controlled 15-minute interval; an existing saved Off choice stays Off. BlueSage coordinates its unused-asset cleanup with the game's native sweep. Run Cleanup Now, {Plugin.ManualSweepKey.Value}, and /sweep now remain independent; the game's timer is unchanged.", () => Plugin.Instance?.RunSweepRestartFromMenu());
-        DrawToggle("Sweep Chat Note", Plugin.NotifyOnSweep, "Posts a quiet local chat line every time a cleanup (automatic or manual) finishes. On by default.");
-        DrawToggle("Sweep Extra GC Pass", Plugin.ForceManagedGcCollect, "Also forces a full garbage-collect pass right after a BlueSage-coordinated cleanup. Off by default; try On only if you're chasing a specific memory issue, since a forced GC pass can briefly stutter the game.");
+        DrawToggle("Automatic Cleanup", Plugin.EnableAutoSweep, $"On for fresh installs every 40 minutes, never right before or after the game's own autosave or its 30-minute cleanup; an existing saved Off choice stays Off. BlueSage times its cleanup around the game's own cleanup. Run Cleanup Now, {Plugin.ManualSweepKey.Value}, and /sweep now remain independent; the game's timer is unchanged.", () => Plugin.Instance?.RunSweepRestartFromMenu());
+        DrawToggle("Cleanup Note", Plugin.NotifyOnSweep, "Shows a quiet chat notice and a toast when an automatic cleanup finishes. Off by default (a note every 40 minutes is a lot in a cozy session); a cleanup you run yourself always says so.");
+        DrawToggle("Extra Memory Cleanup", Plugin.ForceManagedGcCollect, "After a cleanup, also frees leftover memory. Off by default; it can cause a short stutter. Only try it if a helper asked you to.");
         DrawToggle("Host Health", Plugin.EnableHostHealthMonitor, "Background lobby-health checks for long sessions. Most useful for hosts; quiet/local unless a health action has something to report.", () => Plugin.Instance?.RestartHostHealthFromMenu());
         DrawToggle("Leave Notices", Plugin.EnableLeaveNotifications, "Shows you a local notice when someone leaves. Other players do not see it, and overlapping chat mods can make BlueSage back off.");
         DrawToggle("Welcome Message", Plugin.EnableWelcomeMessage, $"Shows two local tips once per lobby: {Plugin.QolMenuKey.Value}/{Plugin.StyleMenuKey.Value} navigation, commands/audit/profile checks, your saved Push to Talk or Voice Activation setting, and the game's Pomodoro/focus ticket + XP reminder. Never posts globally.");
@@ -845,8 +848,8 @@ internal sealed class QolMenuWindow : MonoBehaviour
             Plugin.Instance.ShowWelcomeOverlayNow();
         }
         DrawToggle("BetterMove", Plugin.EnableBetterMove, "Local movement helper: hold Shift to run and Ctrl to slow-walk. It only affects your character input.");
-        DrawToggle("Reusable Consumables", Plugin.EnableUnlimitedConsumables, "Once you own a canteen item, chalk color, or fishing bait, using it no longer lowers the count, so you do not keep spending tickets to replace it. Clothing, rods, and bobbers stay vanilla. Turn Off to restore normal item use immediately.");
-        DrawToggle("Focus Anywhere", Plugin.EnableFocusAnywhere, "Lets focus mode start from more places instead of only vanilla focus spots.");
+        DrawToggle("Reusable Consumables", Plugin.EnableUnlimitedConsumables, "Once you own a canteen item, chalk color, or fishing bait, using it no longer lowers the count, so you do not keep spending tickets to replace it. Clothing, rods, and bobbers work as normal. Turn Off to restore normal item use immediately.");
+        DrawToggle("Focus Anywhere", Plugin.EnableFocusAnywhere, "Lets focus mode start from more places, not only the game's focus spots.");
     }
 
     private void DrawChatReadabilityToggles()
@@ -861,17 +864,17 @@ internal sealed class QolMenuWindow : MonoBehaviour
         DrawToggle("Persistent Chat Backdrop", Plugin.EnablePersistentChatBackdrop, "Keeps the chat panel/backdrop easier to read when the game exposes it. Local UI only; does not rewrite messages.", BlueSage.QoLTweaks.Patches.ChatReadabilityPatch.RefreshVisibleChat);
         DrawToggle("Ping Mentions", Plugin.EnablePingMentions, "Highlights messages that mention your name. Authorized lobby-wide pings are handled automatically for the host and assigned Helpers.");
         DrawToggle("Ping Sound", Plugin.EnablePingSound, "Plays your selected local ping sound when a message mentions you. Change the sound in Customize.");
-        DrawToggle("Copy Chat Messages", Plugin.EnableChatCopy, "Plain left-click keeps the vanilla ID card. Ctrl-left-click copies only the message text. Names, timestamps, statuses, and sender labels are left out.");
+        DrawToggle("Copy Chat Messages", Plugin.EnableChatCopy, "Plain left-click opens the game's ID card. Ctrl-left-click copies only the message text. Names, timestamps, statuses, and sender labels are left out.");
         DrawToggle("Chat Links", Plugin.EnableChatUrlLinks, "Recolors safe web links. Shift-left-click once copies/warns, then repeat within 10 seconds to open.");
-        DrawToggle("Local Audit Exports", Plugin.EnableLocalAuditExports, "Keeps a bounded local rendered-chat transcript and running BepInEx log mirror for troubleshooting or incident review. Nothing uploads automatically. Use /auditlog path or snapshot when you need the files.", SessionAuditController.ReconcileEnabledState);
+        DrawToggle("Local Audit Exports", Plugin.EnableLocalAuditExports, "Optional, off by default. Keeps a copy of your chat and the game log on this computer for troubleshooting, one folder per session in BepInEx/BlueSageQoLModSuite/logs. The newest 3 sessions (or 3 days, or 24 MB) stay as plain files; older ones are zipped and kept 14 days. Nothing is uploaded. Use /auditlog folder or snapshot when you need the files.", SessionAuditController.ReconcileEnabledState);
         DrawLocalAuditActions(showIdentityNote: false);
     }
 
     private void DrawIdentitySafetyToggles()
     {
-        DrawToggle("Reconnect Guard", Plugin.EnableReconnectGuard, "After the game reports a real disconnect, allows up to 10 seconds for clean-menu teardown, waits the Reconnect wait (default 20s, under Settings) so the host can clear your old connection, makes one saved-lobby join, then validates a stable playable session for up to 45 seconds.");
+        DrawToggle("Reconnect Guard", Plugin.EnableReconnectGuard, "If you really get disconnected, BlueSage lets the game return to the menu (up to 10 seconds), waits the Reconnect wait (20 seconds by default, in Customize) so the host can clear your old spot, then rejoins your lobby once and checks for up to 45 seconds that you're back in. It tries at most 5 times per lobby; after that it stops, tells you, and leaves you on the menu.");
         DrawToggle("Reconnect Message", Plugin.EnableReconnectAnnouncement, "Sends the small BlueSage reconnect success message after a guarded reconnect works.");
-        DrawToggle("Enhanced Player Panel", Plugin.EnableEnhancedPlayerPanel, "Adds local @mention and ID-card buttons. Hover the game's green Steam-profile button for a verified ID check. Native report, ignore, kick, and ban buttons stay reachable.");
+        DrawToggle("Enhanced Player Panel", Plugin.EnableEnhancedPlayerPanel, "Adds local @mention and ID-card buttons. Hover the game's green Steam-profile button for a verified ID check. The game's own report, ignore, kick, and ban buttons stay where they are.");
         DrawToggle("Clone Shield", Plugin.EnableCloneShield, "Warns the lobby once when someone newly matches your avatar/outfit or exact styled name. The message is a clue, not proof, and asks everyone to check Steam profiles before acting.");
         DrawCommunityBanControls();
         DrawToggle("MiniMap ID Click", Plugin.EnableMiniMapPlayerLabels, "Click minimap player dots to open ID cards when BlueSage can safely match the player. Floating labels stay removed for performance.");
@@ -881,16 +884,16 @@ internal sealed class QolMenuWindow : MonoBehaviour
     private void DrawPersonalizationToggles()
     {
         DrawSpoonsToggle();
-        DrawToggle("Style UI", Plugin.EnableStyleUi, "Enables /styleui for names, status tags, Spoons, templates, and styled text.");
-        DrawToggle("Performance Overlay", Plugin.EnablePerformanceOverlay, "Shows the public draggable one-line FPS/PING/RAM bar. Hosts show PING -- honestly; connected clients show active-session round-trip latency when available. The bar's × is only a shortcut—you can always restore it here.");
-        DrawToggle("Avatar Presets 4-9", Plugin.EnableExtendedAvatarStyles, "Adds six reversible avatar preset slots to the vanilla dropdown. Slots 1-3 remain game-owned and are never replaced.", BlueSage.QoLTweaks.Patches.AvatarStyleSlotsBridge.RefreshEnabledState);
+        DrawToggle("Style Helper", Plugin.EnableStyleUi, "Turns on Style Helper (/styleui) for names, status tags, Spoons, templates, and styled text.");
+        DrawToggle("Performance Overlay", Plugin.EnablePerformanceOverlay, "Shows a small bar you can drag around with FPS / PING / RAM, plus the QoL Menu and Style Helper buttons and WORK / RELAX. As host, PING shows -- because you are the server; guests see their ping when it's known. The bar's × hides it; turn it back on here anytime.");
+        DrawToggle("Extra Outfit Slots 4-9", Plugin.EnableExtendedAvatarStyles, "Adds six extra outfit slots (4 to 9) below the game's three in the avatar screen's style list. They start on. Styles 1 to 3 stay the game's own and never change; if you turn this off, your extra outfits wait for you.", BlueSage.QoLTweaks.Patches.AvatarStyleSlotsBridge.RefreshEnabledState);
         DrawToggle("Chalkboard Recovery", Plugin.EnableChalkboardPersistence, "Keeps local recovery copies. Use /chalk boards for 0 Stage, 1 Classroom A, and 2 Classroom B. View, save, list, delete, and refresh stay on this computer. Only the Host or an authenticated Helper can request a shared load or clear; BlueSage rechecks the exact board and saves recovery first. Existing Chalky takes ownership when installed.");
     }
 
     private void DrawCommunityBanControls()
     {
         const string tooltip =
-            "On for fresh installs. This local safety check validates the trusted list completely before adding only missing entries to your game's existing local list. It preserves every existing row and cannot kick, ban, or grant authority. Turn it Off any time. Use /communitybans status|refresh|attestation for complete bounded state without identities.";
+            "On for fresh installs. Checks the Community Safety List fully, then adds only the names your game's own ban list is missing. It never removes anything, and it can't kick, ban, or give anyone powers. Turn it Off any time. /communitybans status shows where it's at.";
         DrawToggle(
             "Community Safety List",
             Plugin.EnableCommunityBanListSync,
@@ -903,16 +906,16 @@ internal sealed class QolMenuWindow : MonoBehaviour
                 GUILayout.Height(28f)))
         {
             _message = CommunityBanListController.FriendlyStatusText();
-            MarkAction(_message);
+            MarkActionQuiet(_message);
         }
         if (GUILayout.Button(
-                new GUIContent("Refresh Safety List", "Check the trusted community safety list now. Your existing local list stays unchanged unless the new copy validates completely."),
+                new GUIContent("Refresh Safety List", "Check the Community Safety List now. Your game's ban list only changes if the new copy checks out completely."),
                 _buttonStyle,
                 GUILayout.Height(28f)))
         {
             _message = Plugin.Instance != null
                 ? Plugin.Instance.RefreshCommunityBanListFromQolMenu()
-                : "Community BanData refresh is not ready yet.";
+                : "The Community Safety List isn't ready yet.";
             MarkAction(_message);
         }
         GUILayout.EndHorizontal();
@@ -1001,7 +1004,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         if (GUILayout.Button(new GUIContent(styleHelperOpen ? "Close Style Helper" : "Open Style Helper", "Open or close the helper for names, status tags, colors, templates, and Spoons."), styleHelperOpen ? _enabledButtonStyle : _buttonStyle, GUILayout.Height(34f)))
         {
             _message = Plugin.Instance != null ? Plugin.Instance.ToggleStyleUiFromQolMenu() : "Plugin is not ready.";
-            MarkAction("Style Helper toggled.");
+            MarkAction(_message);
         }
         GUILayout.Space(8f);
 
@@ -1092,12 +1095,12 @@ internal sealed class QolMenuWindow : MonoBehaviour
         DrawHotkeyRow("QoL Menu", Plugin.QolMenuKey, Plugin.HotkeyBindTarget.QolMenu, awaiting);
         DrawHotkeyRow("Style Helper", Plugin.StyleMenuKey, Plugin.HotkeyBindTarget.StyleMenu, awaiting);
         DrawHotkeyRow("Noclip / Fly", Plugin.NoclipFlyKey, Plugin.HotkeyBindTarget.NoclipFly, awaiting);
-        DrawHotkeyRow("Manual Sweep", Plugin.ManualSweepKey, Plugin.HotkeyBindTarget.ManualSweep, awaiting);
+        DrawHotkeyRow("Run Cleanup", Plugin.ManualSweepKey, Plugin.HotkeyBindTarget.ManualSweep, awaiting);
         DrawFlyRotateButtonRow();
         DrawTextSetting("Fly Alt precision (% of fly speed)", ref _flyPrecisionText, "Save 5-50", SaveFlyPrecision, () => Plugin.FlyPrecisionPercent?.Value.ToString() ?? FlyCameraPolicy.DefaultPrecisionPercent.ToString());
 
         GUILayout.Space(4f);
-        if (GUILayout.Button(new GUIContent("Reset All Hotkeys to Defaults", "QoL Menu=Home, Style Helper=Insert, Noclip/Fly=End, Manual Sweep=F8."), _buttonStyle, GUILayout.Height(30f)) && !awaiting && Plugin.Instance != null)
+        if (GUILayout.Button(new GUIContent("Reset All Hotkeys to Defaults", "QoL Menu=Home, Style Helper=Insert, Noclip/Fly=End, Run Cleanup=F8."), _buttonStyle, GUILayout.Height(30f)) && !awaiting && Plugin.Instance != null)
         {
             _message = Plugin.Instance.ResetAllHotkeysToDefaults();
             MarkAction(_message);
@@ -1122,7 +1125,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
             string next = FlyCameraPolicy.FriendlyRotateButtonName(Plugin.FlyRotateButton.Value);
             _message = "Fly camera rotate: " + next + ".";
             Plugin.Instance?.ShowToast("Fly camera rotate: " + next);
-            MarkSaved("Fly camera rotate saved: " + next + ".");
+            MarkSavedQuiet("Fly camera rotate saved: " + next + ".");
         }
         GUILayout.EndHorizontal();
     }
@@ -1206,7 +1209,16 @@ internal sealed class QolMenuWindow : MonoBehaviour
             if (_settingUndoValues.TryGetValue("Lobby welcome message (MOTD)", out string before))
             {
                 _hostMotdText = before;
-                SaveHostMotd();
+                _suppressSaveToast = true;
+                try
+                {
+                    SaveHostMotd();
+                }
+                finally
+                {
+                    _suppressSaveToast = false;
+                }
+
                 _settingUndoValues.Remove("Lobby welcome message (MOTD)");
             }
             else
@@ -1231,9 +1243,9 @@ internal sealed class QolMenuWindow : MonoBehaviour
         SteamIdModerationController.PublishHostCapability();
         _hostMotdText = Plugin.HostMotd.Value;
         string effective = LobbyMotdPolicy.Effective(Plugin.HostMotd.Value);
-        _message = "MOTD saved: \"" + effective + "\". QoL players see it when they join a lobby you host.";
-        Plugin.Instance?.ShowToast("MOTD saved: " + effective);
-        MarkSaved("MOTD saved.");
+        _message = "Welcome message saved: \"" + effective + "\". QoL players see it when they join your lobby.";
+        Plugin.Instance?.ShowToast("Welcome message saved: " + effective);
+        MarkSavedQuiet("Welcome message saved.");
     }
 
     private void SaveFlyPrecision()
@@ -1291,7 +1303,8 @@ internal sealed class QolMenuWindow : MonoBehaviour
         DrawTextSetting("Chat font size", ref _chatFontSizeText, "Save 75-200", SaveChatFontSize, () => Plugin.LockedChatFontSizePercent.ToString());
         DrawTextSetting("Chat window height", ref _chatWindowHeightText, "Save 100-200", SaveChatWindowHeight, () => Plugin.LockedChatWindowHeightPercent.ToString());
         DrawTextSetting("Retained chat rows", ref _chatHistoryRowsText, "Save 25-250", SaveChatHistoryRows, () => Plugin.LockedChatHistoryRows.ToString());
-        if (GUILayout.Button(new GUIContent("Reset Chat UI to Vanilla", "Sets whole chat UI scale, message font size, and window height back to 100% and restores the saved vanilla transform where possible."), _buttonStyle, GUILayout.Height(30f)))
+        DrawTextSetting("Local chat range (m)", ref _localChatRangeText, "Save 5-25", SaveLocalChatRange, () => Plugin.LockedLocalChatRangeMeters.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture));
+        if (GUILayout.Button(new GUIContent("Reset Chat to the Game's Default", "Sets chat size, message text size and window height back to 100% and puts the chat back where the game had it, where possible. Also /chatvanilla."), _buttonStyle, GUILayout.Height(30f)))
         {
             _message = Plugin.Instance != null ? Plugin.Instance.ResetChatUiToVanillaFromMenu() : "Plugin is not ready.";
             HydrateFields();
@@ -1325,7 +1338,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
     {
         GUILayout.BeginVertical(_boxStyle, GUILayout.ExpandHeight(false));
         GUILayout.Label("Tools, safety, and credits", _sectionHeaderStyle);
-        GUILayout.Label("Less-used controls live here so the everyday tabs stay calm. Each section keeps its existing behavior and exact hover help.", _smallStyle);
+        GUILayout.Label("Less-used things live here so the everyday tabs stay calm. Hover anything for a short explanation.", _smallStyle);
         GUILayout.Space(8f);
 
         bool useTwoColumns = _windowRect.width >= 1280f;
@@ -1369,11 +1382,11 @@ internal sealed class QolMenuWindow : MonoBehaviour
     private void DrawAboutAndCredits()
     {
         GUILayout.Label("BlueSage QoL Tweaks brings common comfort, readability, personalization, reconnect, and community-safety tools into one guided menu.", _smallStyle);
-        GUILayout.Label("Asset Sweep asks Unity to unload assets that are no longer used. It never deletes files or touches profiles. MiniMap ID Click stays lightweight; floating name labels remain removed after large-lobby performance reports.", _smallStyle);
+        GUILayout.Label("Automatic Cleanup gently frees game memory that's no longer used. It never deletes files or touches your profile. MiniMap ID Click stays light; floating name labels stay off because they slowed big lobbies down.", _smallStyle);
         if (GUILayout.Button(new GUIContent("Run Host Health", "Optional host-focused lobby-health check. Most players only need Run QoL Status on Main."), _buttonStyle, GUILayout.Height(30f)))
         {
             _message = Plugin.Instance != null ? Plugin.Instance.RunHostHealthFromQolMenu() : "Plugin is not ready.";
-            MarkAction("Host Health check requested.");
+            MarkAction(_message);
         }
         GUILayout.Space(8f);
         GUILayout.Label("Optional lobby joke", _labelStyle);
@@ -1407,13 +1420,13 @@ internal sealed class QolMenuWindow : MonoBehaviour
         GUILayout.Space(10f);
         if (accessState == LobbySafetyAccessState.HelperWaitingForHost)
         {
-            GUILayout.Label("Helper assigned • secure host channel pending", _labelStyle);
-            GUILayout.Label("Protected player details stay locked until the host publishes a compatible capability. This unlocks automatically; no command is required.", _smallStyle);
+            GUILayout.Label("Helper assigned • waiting for the host", _labelStyle);
+            GUILayout.Label("You're an assigned Helper here. Your tools unlock by themselves once the host's BlueSage answers. No command needed.", _smallStyle);
             GUILayout.Space(8f);
-            if (GUILayout.Button(new GUIContent("Refresh Access Now", "Optional immediate check for the current v3 member-data capability. Automatic checks continue without this button. Technical state: " + accessReason), _buttonStyle, GUILayout.Height(32f)))
+            if (GUILayout.Button(new GUIContent("Check Again", "Check again now. BlueSage also keeps checking on its own."), _buttonStyle, GUILayout.Height(32f)))
             {
                 _message = Plugin.Instance != null ? Plugin.Instance.CheckModerationAccessFromQolMenu() : "Helper / Safety is not ready yet.";
-                MarkAction("Helper access rechecked. Waiting for a fresh compatible host capability if the tools remain locked.");
+                MarkActionQuiet("Checked again. Your tools unlock as soon as the host's BlueSage answers.");
             }
             GUILayout.EndVertical();
             return;
@@ -1428,14 +1441,14 @@ internal sealed class QolMenuWindow : MonoBehaviour
         GUILayout.Space(10f);
 
         GUILayout.BeginVertical(_identitySectionBoxStyle);
-        GUILayout.Label("Defensive compatibility", _labelStyle);
+        GUILayout.Label("Other mods", _labelStyle);
         GUILayout.Label(Plugin.GetDefensiveCompatibilitySummary(), _smallStyle);
-        GUILayout.Label("The optional community safety list checks trusted entries locally. Existing rows remain untouched; an invalid refresh is discarded and cannot kick, ban, or grant authority. " + CommunityBanListController.FriendlyStatusText(), _smallStyle);
+        GUILayout.Label("The Community Safety List is checked on this computer. It never removes your own ban entries, a bad download is thrown away, and it can't kick, ban, or give anyone powers. " + CommunityBanListController.FriendlyStatusText(), _smallStyle);
         GUILayout.EndVertical();
         GUILayout.Space(10f);
 
         GUILayout.BeginVertical(_identitySectionBoxStyle);
-        GUILayout.Label("Local audit evidence", _labelStyle);
+        GUILayout.Label("Local Audit Exports", _labelStyle);
         DrawLocalAuditActions(showIdentityNote: true);
         GUILayout.EndVertical();
         GUILayout.Space(10f);
@@ -1444,7 +1457,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         if (GUILayout.Button(new GUIContent("Check My Access", "Shows whether you are the current host, a host-assigned Helper, or a regular player."), _buttonStyle, GUILayout.Height(32f)))
         {
             _message = Plugin.Instance != null ? Plugin.Instance.CheckModerationAccessFromQolMenu() : "Lobby Safety is not ready yet.";
-            MarkAction(_message);
+            MarkActionQuiet(_message);
         }
         if (isHost && GUILayout.Button(new GUIContent("Clear All Helpers", "Remove every Helper from your persistent host-owned list. Your own host access remains."), _buttonStyle, GUILayout.Height(32f)))
         {
@@ -1461,7 +1474,80 @@ internal sealed class QolMenuWindow : MonoBehaviour
             DrawOfflineBanEntry();
             GUILayout.Space(12f);
             DrawNativeBanRecords();
+            GUILayout.Space(12f);
+            DrawHostJournalBox();
         }
+        GUILayout.EndVertical();
+    }
+
+    // Round 4 Stage D (Blue: "the host should always have audit and logs available alongside helper actions"), Stage H
+    // (Blue: readable for hosts of 60-100 slots): actions first, one pinned status line, three filters, one-glance
+    // rows with the full line on hover, click to copy a row, "Copy last 20". The file below keeps every row.
+    private void DrawHostJournalBox()
+    {
+        GUILayout.BeginVertical(_identitySectionBoxStyle);
+        GUILayout.Label("Host journal", _labelStyle);
+        GUILayout.Label("Every ban, unban, kick or mute made through BlueSage (yours, a Helper's, or the game's own Ban buttons): who did it, to whom, the RECONNECTED/LOADING label and whether it worked. Hover a row for the full line with the Steam ID and reason; click it to copy. Always on while you host, and saved to the file below.", _smallStyle);
+        GUILayout.Label(HostJournalBoxPolicy.PinnedStatusLine(HostJournalController.LatestStatus, HostJournalController.StatusChangeCount), _smallStyle);
+        GUILayout.BeginHorizontal();
+        if (GUILayout.Toggle(_hostJournalFilter == HostJournalBoxFilter.Actions, new GUIContent("Actions", "Bans, unbans, kicks and mutes, newest first (the last 100)."), _buttonStyle, GUILayout.Width(80f)))
+        {
+            _hostJournalFilter = HostJournalBoxFilter.Actions;
+        }
+        if (GUILayout.Toggle(_hostJournalFilter == HostJournalBoxFilter.Status, new GUIContent("Status", "Lobby or health changes, plus a check-in every 5 minutes (last 20)."), _buttonStyle, GUILayout.Width(80f)))
+        {
+            _hostJournalFilter = HostJournalBoxFilter.Status;
+        }
+        if (GUILayout.Toggle(_hostJournalFilter == HostJournalBoxFilter.RefusedOnly, new GUIContent("Refused only", "Actions BlueSage refused, with the reason on hover."), _buttonStyle, GUILayout.Width(110f)))
+        {
+            _hostJournalFilter = HostJournalBoxFilter.RefusedOnly;
+        }
+        GUILayout.FlexibleSpace();
+        IReadOnlyList<HostJournalRow> rows = HostJournalBoxPolicy.Select(
+            HostJournalController.SnapshotActionsNewestFirst(),
+            HostJournalController.SnapshotStatusNewestFirst(),
+            _hostJournalFilter);
+        if (GUILayout.Button(new GUIContent("Copy last 20", "Copies the newest 20 rows of this view as full lines."), _buttonStyle, GUILayout.Width(110f)))
+        {
+            GUIUtility.systemCopyBuffer = HostJournalBoxPolicy.CopyBlock(rows, HostJournalBoxPolicy.CopyRowCount);
+            MarkAction("Host journal rows copied.");
+        }
+        GUILayout.EndHorizontal();
+
+        _hostJournalScroll = GUILayout.BeginScrollView(_hostJournalScroll, GUILayout.Height(rows.Count == 0 ? 36f : 160f));
+        if (rows.Count == 0)
+        {
+            GUILayout.Label(_hostJournalFilter == HostJournalBoxFilter.RefusedOnly ? "Nothing refused this session." : "No rows yet this session.", _smallStyle);
+        }
+
+        foreach (HostJournalRow row in rows)
+        {
+            bool refused = row.Kind == HostJournalRowKind.Action && !row.Success;
+            Color previous = GUI.contentColor;
+            if (refused)
+            {
+                GUI.contentColor = new Color(1f, 0.78f, 0.55f, 1f);
+            }
+
+            if (GUILayout.Button(new GUIContent(HostJournalBoxPolicy.ToShortLine(row), HostJournalFormat.ToDisplayLine(row)), _smallStyle))
+            {
+                GUIUtility.systemCopyBuffer = HostJournalFormat.ToDisplayLine(row);
+                MarkAction("Host journal row copied.");
+            }
+
+            GUI.contentColor = previous;
+        }
+
+        GUILayout.EndScrollView();
+        GUILayout.Space(4f);
+        GUILayout.BeginHorizontal();
+        GUILayout.Label(HostJournalController.FilePath, _smallStyle);
+        if (GUILayout.Button(new GUIContent("Copy Path", "Copies the journal file path to the clipboard."), _buttonStyle, GUILayout.Width(90f)))
+        {
+            GUIUtility.systemCopyBuffer = HostJournalController.FilePath;
+            MarkAction("Host journal path copied.");
+        }
+        GUILayout.EndHorizontal();
         GUILayout.EndVertical();
     }
 
@@ -1526,7 +1612,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
                 GUILayout.Height(30f)))
         {
             _message = HostConsoleController.AuditNativeModerationUi();
-            MarkAction(_message);
+            MarkActionQuiet(_message);
         }
         if (_hostCardHasCapability)
         {
@@ -1536,15 +1622,15 @@ internal sealed class QolMenuWindow : MonoBehaviour
             GUILayout.Label(capability.Summary, _smallStyle);
             GUILayout.BeginHorizontal();
             if ((capability.Actions & BlueSageHostCapabilityActionMaskV1.RefreshSnapshot) != 0 &&
-                GUILayout.Button("Refresh Private Status", _buttonStyle, GUILayout.Height(28f)))
+                GUILayout.Button("Refresh status", _buttonStyle, GUILayout.Height(28f)))
             {
                 HostConsoleController.TryExecuteCapability(
                     BlueSageHostCapabilityActionV1.RefreshSnapshot,
                     out _message);
-                MarkAction(_message);
+                MarkActionQuiet(_message);
             }
             if ((capability.Actions & BlueSageHostCapabilityActionMaskV1.ResetMovement) != 0 &&
-                GUILayout.Button("Reset Private Movement", _buttonStyle, GUILayout.Height(28f)))
+                GUILayout.Button("Reset movement", _buttonStyle, GUILayout.Height(28f)))
             {
                 HostConsoleController.TryExecuteCapability(
                     BlueSageHostCapabilityActionV1.ResetMovement,
@@ -1552,12 +1638,12 @@ internal sealed class QolMenuWindow : MonoBehaviour
                 MarkAction(_message);
             }
             if ((capability.Actions & BlueSageHostCapabilityActionMaskV1.AuditNativeModeration) != 0 &&
-                GUILayout.Button("Private Audit", _buttonStyle, GUILayout.Height(28f)))
+                GUILayout.Button("Check game buttons", _buttonStyle, GUILayout.Height(28f)))
             {
                 HostConsoleController.TryExecuteCapability(
                     BlueSageHostCapabilityActionV1.AuditNativeModeration,
                     out _message);
-                MarkAction(_message);
+                MarkActionQuiet(_message);
             }
             GUILayout.EndHorizontal();
         }
@@ -1568,8 +1654,9 @@ internal sealed class QolMenuWindow : MonoBehaviour
         LobbySafetyAccessState accessState,
         bool isHost)
     {
+        // Round 4b: refreshing read, so the section never flashes the one-frame "stale" help text every 2 s.
         IdentityResyncCoverage coverage =
-            PlayerIdentityEvidenceController.GetCachedIdentityResyncCoverage();
+            PlayerIdentityEvidenceController.GetIdentityResyncCoverage();
         IdentityResyncHelpPresentation help =
             IdentityResyncHelpPolicy.Describe(coverage, isHost);
 
@@ -1590,6 +1677,10 @@ internal sealed class QolMenuWindow : MonoBehaviour
         GUILayout.Space(4f);
         GUILayout.Label("Step 1 - safe display refresh", _smallStyle);
         GUILayout.Label(help.RefreshExplanation, _smallStyle);
+        if (isHost)
+        {
+            GUILayout.Label("Runs by itself every 15 minutes while you host (rescan and relabel only, never a moderation action). It writes no journal row; the journal keeps decisions and changes.", _smallStyle);
+        }
         GUILayout.BeginHorizontal();
         if (GUILayout.Button(
                 new GUIContent(
@@ -1603,8 +1694,8 @@ internal sealed class QolMenuWindow : MonoBehaviour
             _message = IdentityResyncHelpPolicy.FormatActionResult(
                 "refresh",
                 rawResult,
-                PlayerIdentityEvidenceController.GetCachedIdentityResyncCoverage());
-            MarkAction(_message);
+                PlayerIdentityEvidenceController.GetIdentityResyncCoverage());
+            MarkActionQuiet(_message);
         }
         if (isHost ||
             accessState == LobbySafetyAccessState.HelperReady)
@@ -1622,8 +1713,8 @@ internal sealed class QolMenuWindow : MonoBehaviour
                 _message = IdentityResyncHelpPolicy.FormatActionResult(
                     action,
                     rawResult,
-                    PlayerIdentityEvidenceController.GetCachedIdentityResyncCoverage());
-                MarkAction(_message);
+                    PlayerIdentityEvidenceController.GetIdentityResyncCoverage());
+                MarkActionQuiet(_message);
             }
         }
         GUILayout.EndHorizontal();
@@ -1654,7 +1745,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         if (GUILayout.Button(new GUIContent(_showClosedIncidentHistory ? "Hide History" : "Show History", "Show or hide resolved and locally dismissed incident history."), _buttonStyle, GUILayout.Width(104f), GUILayout.Height(28f)))
             _showClosedIncidentHistory = !_showClosedIncidentHistory;
         GUILayout.EndHorizontal();
-        GUILayout.Label("C# is a local shortcut. Victim and suspect SteamID64 values remain exact; resolve clears the role highlights for QoL clients that receive the verified host/Helper notice.", _smallStyle);
+        GUILayout.Label("Case numbers (C001, C002...) are just a shortcut on this computer. The Steam IDs stay exact. Resolve for Lobby clears the highlights for everyone with QoL once the host or a Helper sends it.", _smallStyle);
 
         if (open.Count > 0 && GUILayout.Button(new GUIContent("Dismiss All Open Locally", "Clear every open Clone Shield advisory and highlight on this client only. This never bans, changes Helpers, or publishes lobby state. Use /sidincident dismiss-all for the same action."), _buttonStyle, GUILayout.Height(30f)))
         {
@@ -1676,9 +1767,9 @@ internal sealed class QolMenuWindow : MonoBehaviour
             GUILayout.Label("Protected victim: " + incident.VictimLabel + "  •  …" + PlayerIdentityEvidenceController.Suffix(incident.VictimSteamId), _smallStyle);
             GUILayout.Label("Suspect: " + incident.SuspectLabel + "  •  …" + PlayerIdentityEvidenceController.Suffix(incident.SuspectSteamId), _smallStyle);
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button(new GUIContent("Select Victim", "Select the exact protected-victim row in the verified live roster above. Ban controls remain blocked for this row."), _buttonStyle, GUILayout.Height(28f)))
+            if (GUILayout.Button(new GUIContent("Select Victim", "Select the protected player in the player list above. Ban buttons stay blocked for them."), _buttonStyle, GUILayout.Height(28f)))
                 SelectSafetyPlayer(incident.VictimSteamId);
-            if (GUILayout.Button(new GUIContent("Select Suspect", "Select the exact suspected-copier row in the verified live roster above for profile verification."), _buttonStyle, GUILayout.Height(28f)))
+            if (GUILayout.Button(new GUIContent("Select Suspect", "Select the possible copier in the player list above so you can check their Steam profile."), _buttonStyle, GUILayout.Height(28f)))
                 SelectSafetyPlayer(incident.SuspectSteamId);
             GUILayout.EndHorizontal();
             GUILayout.BeginHorizontal();
@@ -1697,7 +1788,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
             if (GUILayout.Button(new GUIContent("Preview Suspect Ban", "Create a safe preview for the exact suspect. Confirmation remains separate."), _experimentalButtonStyle, GUILayout.Height(28f)))
             {
                 _message = Plugin.Instance != null ? Plugin.Instance.PreviewSidBanFromQolMenu(incident.SuspectSteamId) : "SID preview is not ready yet.";
-                MarkAction(_message);
+                MarkActionQuiet(_message);
             }
             ModerationConfirmationReadiness confirmation = Plugin.Instance != null
                 ? Plugin.Instance.GetModerationConfirmationReadiness("ban", incident.SuspectSteamId)
@@ -1718,7 +1809,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
             if (GUILayout.Button(new GUIContent("Resolve for Lobby", "Host or Helper: mark this incident handled and clear its victim/suspect highlights for compatible QoL clients."), _enabledButtonStyle, GUILayout.Height(28f)))
             {
                 CloneIncidentActionController.TryResolveForLobby(incident.Id, out _message);
-                MarkAction(_message);
+                MarkActionQuiet(_message);
             }
             if (GUILayout.Button(new GUIContent("Dismiss Locally", "Remove this advisory incident and its highlights on this client only. No moderation state changes."), _buttonStyle, GUILayout.Height(28f)))
             {
@@ -1729,7 +1820,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
             GUILayout.EndVertical();
         }
 
-        if (open.Count > 4) GUILayout.Label("Showing the newest 4 open incidents below the live roster. Use /sidlist for a compact summary, dismiss handled entries, or dismiss all locally to clear advisory clutter.", _smallStyle);
+        if (open.Count > 4) GUILayout.Label("Showing the newest 4 open incidents. Use /sidlist for a short summary, dismiss the ones you've handled, or dismiss all on this computer to clear the list.", _smallStyle);
 
         if (_showClosedIncidentHistory)
         {
@@ -1767,7 +1858,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
     {
         GUILayout.BeginVertical(_identitySectionBoxStyle);
         GUILayout.Label("Find a verified live player", _labelStyle);
-        GUILayout.Label("Type part of the displayed name, raw TMP tags, Steam persona, 4+ SteamID digits, _host, _self, or a regex pattern. Matching never grants ban authority; it only filters rows whose live game and lobby identity agrees.", _smallStyle);
+        GUILayout.Label("Type part of a name (even its style codes), a Steam name, 4 or more Steam ID digits, _host, _self, or a pattern. Searching only narrows the list to matched players; it never gives anyone ban powers.", _smallStyle);
         GUILayout.Label(rosterStatus, _smallStyle);
         GUILayout.BeginHorizontal();
         string priorQuery = _safetyRosterQuery;
@@ -1794,7 +1885,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         _safetyRosterPage = Mathf.Clamp(_safetyRosterPage, 0, pageCount - 1);
 
         GUILayout.BeginHorizontal();
-        GUILayout.Label($"Verified active roster • {roster.Count}/{liveRoster.Count} matching • page {_safetyRosterPage + 1}/{pageCount}", _labelStyle);
+        GUILayout.Label($"Matched players • {roster.Count}/{liveRoster.Count} shown • page {_safetyRosterPage + 1}/{pageCount}", _labelStyle);
         GUILayout.FlexibleSpace();
         GUI.enabled = _safetyRosterPage > 0;
         if (GUILayout.Button(new GUIContent("◀ Previous", "Show the previous eight verified current-lobby rows."), _buttonStyle, GUILayout.Width(104f), GUILayout.Height(28f)))
@@ -1815,7 +1906,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         if (roster.Count == 0)
         {
             GUILayout.Label(string.IsNullOrWhiteSpace(_safetyRosterQuery)
-                ? "The verified player roster is not ready yet. Close and reopen the player panel, then return here."
+                ? "The player list isn't matched yet. Close and reopen the game's player list, then come back here."
                 : "No current verified player matches this filter. Clear it or add more exact detail.", _smallStyle);
             return;
         }
@@ -1833,7 +1924,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
             if (GUILayout.Button(new GUIContent(label, rowTooltip), selected ? _activeButtonStyle : _buttonStyle, GUILayout.Height(30f)))
             {
                 _selectedSafetySteamId = selected ? string.Empty : row.SteamId;
-                MarkAction(selected
+                MarkActionQuiet(selected
                     ? "Cleared the selected player."
                     : "Selected " + row.DisplayName + " (Steam …" + PlayerIdentityEvidenceController.Suffix(row.SteamId) + ").");
             }
@@ -1844,7 +1935,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         {
             _selectedSafetySteamId = string.Empty;
             GUILayout.Space(8f);
-            GUILayout.Label("No player is selected. Click the exact verified row you intend to inspect; BlueSage never silently retargets actions after filtering or roster changes.", _smallStyle);
+            GUILayout.Label("No player is selected. Click the player you want to look at; BlueSage never switches your selection to someone else when the list changes.", _smallStyle);
             return;
         }
 
@@ -1856,7 +1947,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         if (GUILayout.Button(new GUIContent("Clear Selection", "Deselect this player and disarm every selection-scoped moderation control."), _buttonStyle, GUILayout.Width(130f), GUILayout.Height(28f)))
         {
             _selectedSafetySteamId = string.Empty;
-            MarkAction("Cleared the selected player.");
+            MarkActionQuiet("Cleared the selected player.");
             GUILayout.EndHorizontal();
             GUILayout.EndVertical();
             return;
@@ -1866,7 +1957,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         GUILayout.Label("Steam persona: " + (string.IsNullOrWhiteSpace(selectedRow.SteamPersona) ? "not cached" : selectedRow.SteamPersona), _smallStyle);
         GUILayout.Label("SteamID64: " + selectedRow.SteamId, _smallStyle);
         GUILayout.Label("Verified live row #" + (selectedRow.RosterIndex + 1) + " • PlayerID " + selectedRow.NetworkPlayerId, _smallStyle);
-        GUILayout.Label("Raw rendered name / TMP tags (copyable audit source):", _smallStyle);
+        GUILayout.Label("Name exactly as typed, with its style codes (you can copy it):", _smallStyle);
         _ = GUILayout.TextArea(selectedRow.DisplayNameRaw ?? string.Empty, _textFieldStyle, GUILayout.MinHeight(42f), GUILayout.MaxHeight(70f));
 
         bool isSelfRow = selectedRow.IsLocal;
@@ -1895,7 +1986,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
             }
         }
         GUILayout.EndHorizontal();
-        if (GUILayout.Button(new GUIContent("Copy Identity Evidence", "Copy one local audit record containing the displayed name, raw TMP source, cached Steam persona, exact SteamID64, verified row, PlayerID, and current role. Nothing is sent to chat."), _buttonStyle, GUILayout.Height(32f)))
+        if (GUILayout.Button(new GUIContent("Copy Identity Evidence", "Copy one note with the shown name, the name with its style codes, the Steam name, the exact Steam ID, the player's row and PlayerID, and their role. Nothing is sent to chat."), _buttonStyle, GUILayout.Height(32f)))
         {
             _message = Plugin.Instance != null ? Plugin.Instance.CopyIdentityEvidenceFromQolMenu(selectedRow.SteamId) : "Identity evidence copy is not ready yet.";
             MarkAction(_message);
@@ -1929,7 +2020,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         if (GUILayout.Button(new GUIContent(banLabel, banTooltip), _experimentalButtonStyle, GUILayout.Height(32f)))
         {
             _message = Plugin.Instance != null ? Plugin.Instance.PreviewSidBanFromQolMenu(selectedRow.SteamId) : "SID preview is not ready yet.";
-            MarkAction(_message);
+            MarkActionQuiet(_message);
         }
         GUI.enabled = !isProtectedRole && confirmation.IsReady &&
                       (!isHost || moderationSurface.CanExecuteHostRemove);
@@ -1944,8 +2035,43 @@ internal sealed class QolMenuWindow : MonoBehaviour
         }
         GUI.enabled = true;
         GUILayout.EndHorizontal();
+
+        // Round 4 Stage E #3: kick (ban, wait until gone, unban) and lobby-wide mute, same preview + confirm gating as the ban row.
+        DrawSelectedRowLiveAction("kick", "Preview Kick", "Confirm Kick", "Kick = ban through the game's own flow, wait until the player is gone (max 20 s), then unban. If they are still here at 20 s the ban stays and you are told.", isProtectedRole, isHost, moderationSurface, selectedRow.SteamId);
+        DrawSelectedRowLiveAction("mute", "Preview Mute", "Confirm Mute", "Lobby-wide mute: the host stops relaying this player's chat to everyone for this hosting session, including you. Their own messages stop appearing for them too, so they will notice. Voice is unaffected.", isProtectedRole, isHost, moderationSurface, selectedRow.SteamId);
         GUILayout.Label("Your own row is marked SELF and automatically protected; a host never adds itself as a Helper. A ban preview never acts immediately. Recheck the profile, then use the explicit confirmation shown locally. Protected victims, host, Helpers, self, and ambiguous rows are blocked.", _smallStyle);
         GUILayout.EndVertical();
+    }
+
+    // Round 4 Stage E #3: one preview + confirm row for a live action (kick or mute) on the selected verified player.
+    private void DrawSelectedRowLiveAction(string action, string previewLabel, string confirmLabelBase, string explanation, bool isProtectedRole, bool isHost, HostModerationSurfaceDecision moderationSurface, string steamId)
+    {
+        ModerationConfirmationReadiness confirmation = Plugin.Instance != null
+            ? Plugin.Instance.GetModerationConfirmationReadiness(action, steamId)
+            : new ModerationConfirmationReadiness(false, 0);
+        GUILayout.Space(4f);
+        GUILayout.Label(explanation, _smallStyle);
+        GUI.enabled = !isProtectedRole && (!isHost || moderationSurface.CanArmHostRemove);
+        GUILayout.BeginHorizontal();
+        if (GUILayout.Button(new GUIContent(isProtectedRole ? "Protected" : previewLabel, "Create a safe preview only. The exact live row is revalidated and still requires a separate confirmation."), _experimentalButtonStyle, GUILayout.Height(32f)))
+        {
+            _message = Plugin.Instance != null ? Plugin.Instance.PreviewSidLiveActionFromQolMenu(action, steamId) : "SID preview is not ready yet.";
+            MarkActionQuiet(_message);
+        }
+
+        GUI.enabled = !isProtectedRole && confirmation.IsReady && (!isHost || moderationSurface.CanExecuteHostRemove);
+        string confirmLabel = confirmation.IsReady ? $"{confirmLabelBase}  •  {confirmation.SecondsRemaining}s" : "Preview Required";
+        if (GUILayout.Button(new GUIContent(confirmLabel, confirmation.IsReady
+                ? "Confirm the matching exact-player preview before its visible countdown expires."
+                : "Create a matching preview first; confirmation stays disabled until then."),
+                confirmation.IsReady ? _enabledButtonStyle : _disabledButtonStyle, GUILayout.Height(32f)))
+        {
+            _message = Plugin.Instance != null ? Plugin.Instance.ConfirmSidLiveActionFromQolMenu(action, steamId) : "SID confirmation is not ready yet.";
+            MarkAction(_message);
+        }
+
+        GUI.enabled = true;
+        GUILayout.EndHorizontal();
     }
 
     private void DrawNativeBanRecords()
@@ -1957,7 +2083,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
 
         GUILayout.BeginVertical(_identitySectionBoxStyle);
         GUILayout.BeginHorizontal();
-        GUILayout.Label($"Native banned players • {records.Count} saved • page {_nativeBanPage + 1}/{pageCount}", _sectionHeaderStyle);
+        GUILayout.Label($"The game's ban list • {records.Count} saved • page {_nativeBanPage + 1}/{pageCount}", _sectionHeaderStyle);
         GUILayout.FlexibleSpace();
         GUI.enabled = _nativeBanPage > 0;
         if (GUILayout.Button(new GUIContent("◀ Previous", "Show the previous eight host-native ban records."), _buttonStyle, GUILayout.Width(104f), GUILayout.Height(28f)))
@@ -1978,7 +2104,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         if (!recordsAvailable)
         {
             _selectedBannedSteamId = string.Empty;
-            GUILayout.Label("Native banned-player list is NOT AVAILABLE: " + readError + ". No empty-list claim or unban action is shown.", _smallStyle);
+            GUILayout.Label("The game's ban list can't be read right now (" + readError + "). Nothing is shown and no unban is offered until it can.", _smallStyle);
             GUILayout.EndVertical();
             return;
         }
@@ -1999,12 +2125,12 @@ internal sealed class QolMenuWindow : MonoBehaviour
             bool isSelected = string.Equals(_selectedBannedSteamId, record.SteamId, StringComparison.Ordinal);
             string label = $"#{index + 1:00}  {record.DisplayName}  •  …{PlayerIdentityEvidenceController.Suffix(record.SteamId)}";
             string rowTooltip = isSelected
-                ? "Selected. Click again to clear this native-ban selection."
+                ? "Selected. Click again to clear this selection."
                 : "Select this exact paired native ban record.";
             if (GUILayout.Button(new GUIContent(label, rowTooltip), isSelected ? _activeButtonStyle : _buttonStyle, GUILayout.Height(30f)))
             {
                 _selectedBannedSteamId = isSelected ? string.Empty : record.SteamId;
-                MarkAction(isSelected
+                MarkActionQuiet(isSelected
                     ? "Cleared the selected native ban."
                     : "Selected native ban for " + record.DisplayName + " (Steam …" + PlayerIdentityEvidenceController.Suffix(record.SteamId) + ").");
             }
@@ -2015,7 +2141,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         {
             _selectedBannedSteamId = string.Empty;
             GUILayout.Space(8f);
-            GUILayout.Label("No native ban is selected. Click the exact saved row you intend to inspect; BlueSage never silently selects or retargets an unban action.", _smallStyle);
+            GUILayout.Label("No saved ban is selected. Click the exact row you want to look at; BlueSage never picks or switches it for you.", _smallStyle);
             GUILayout.EndVertical();
             return;
         }
@@ -2027,7 +2153,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         if (GUILayout.Button(new GUIContent("Clear Selection", "Deselect this native ban and disarm every selection-scoped unban control."), _buttonStyle, GUILayout.Width(130f), GUILayout.Height(28f)))
         {
             _selectedBannedSteamId = string.Empty;
-            MarkAction("Cleared the selected native ban.");
+            MarkActionQuiet("Cleared the selected native ban.");
             GUILayout.EndHorizontal();
             GUILayout.EndVertical();
             return;
@@ -2042,7 +2168,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         if (GUILayout.Button(new GUIContent("Preview SID Unban", "Create a safe unban preview only. A separate exact confirmation is still required."), _experimentalButtonStyle, GUILayout.Height(32f)))
         {
             _message = Plugin.Instance != null ? Plugin.Instance.PreviewSidUnbanFromQolMenu(selected.SteamId) : "SID unban preview is not ready yet.";
-            MarkAction(_message);
+            MarkActionQuiet(_message);
         }
         ModerationConfirmationReadiness confirmation = Plugin.Instance != null
             ? Plugin.Instance.GetModerationConfirmationReadiness("unban", selected.SteamId)
@@ -2076,7 +2202,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
     private void DrawOfflineBanEntry()
     {
         GUILayout.BeginVertical(_identitySectionBoxStyle);
-        GUILayout.Label("Add exact off-roster SteamID64", _sectionHeaderStyle);
+        GUILayout.Label("Ban a Steam ID that isn't in the lobby", _sectionHeaderStyle);
         GUILayout.Label("Host only. Use this when another trusted host gives you an exact SteamID64 for advance protection. BlueSage saves the game's native ban entry without pretending the absent player was kicked.", _smallStyle);
         GUILayout.Label("Always open and verify the Steam profile first. Reports and names never auto-fill or authorize this field.", _smallStyle);
 
@@ -2099,7 +2225,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         if (GUILayout.Button(new GUIContent("Preview Offline SID Ban", "Create a 30-second host-only preview. This does not save or kick anything."), _experimentalButtonStyle, GUILayout.Height(32f)))
         {
             _message = Plugin.Instance != null ? Plugin.Instance.PreviewSidBanFromQolMenu(_offlineBanSteamIdText) : "SID preview is not ready yet.";
-            MarkAction(_message);
+            MarkActionQuiet(_message);
         }
         ModerationConfirmationReadiness confirmation = Plugin.Instance != null
             ? Plugin.Instance.GetModerationConfirmationReadiness("ban", _offlineBanSteamIdText)
@@ -2129,9 +2255,9 @@ internal sealed class QolMenuWindow : MonoBehaviour
     {
         GUILayout.Label(SessionAuditController.StatusText(), _smallStyle);
         if (showIdentityNote)
-            GUILayout.Label("Chat records preserve the displayed raw TMP name/message beside plain text. Exact SteamID64 and Steam persona fields are populated only for this verified host/Helper role. Files rotate locally and are never uploaded automatically.", _smallStyle);
+            GUILayout.Label("For hosts and Helpers, the chat copy also notes each sender's Steam ID. Older sessions are zipped on this computer; nothing is uploaded.", _smallStyle);
         GUILayout.BeginHorizontal();
-        if (GUILayout.Button(new GUIContent("Snapshot Now", "Create a fresh timestamped copy of the true live BepInEx LogOutput.log, flush the running audit, and copy the new snapshot folder path."), _buttonStyle, GUILayout.Height(30f)))
+        if (GUILayout.Button(new GUIContent("Snapshot Now", "Saves a copy of the game log right now (the newest 8 MB; the 2 newest are kept per session) and copies the snapshot's file path for you."), _buttonStyle, GUILayout.Height(30f)))
         {
             _message = SessionAuditController.SnapshotNow();
             MarkAction(_message);
@@ -2165,10 +2291,10 @@ internal sealed class QolMenuWindow : MonoBehaviour
             MarkMovementResult(_message);
         }
         GUILayout.EndHorizontal();
-        DrawSelfMovementSetting("Speed x", ref _selfSpeedText, "speed", "0.25-5; 1 is vanilla. This also scales fly speed.");
-        DrawSelfMovementSetting("Jump x", ref _selfJumpText, "jump", "0.25-5; 1 is vanilla.");
-        DrawSelfMovementSetting("Gravity x", ref _selfGravityText, "gravity", "0.1-5; 1 is vanilla.");
-        if (GUILayout.Button(new GUIContent("Reset Self Movement", "Turn fly off and return speed, jump, and gravity to 1x vanilla. Your saved position is kept."), _buttonStyle, GUILayout.Height(30f)))
+        DrawSelfMovementSetting("Speed x", ref _selfSpeedText, "speed", "0.25-5; 1 is the game's normal. This also scales fly speed.");
+        DrawSelfMovementSetting("Jump x", ref _selfJumpText, "jump", "0.25-5; 1 is the game's normal.");
+        DrawSelfMovementSetting("Gravity x", ref _selfGravityText, "gravity", "0.1-5; 1 is the game's normal.");
+        if (GUILayout.Button(new GUIContent("Reset Self Movement", "Turn fly off and return speed, jump, and gravity to the game's normal 1x. Your saved position is kept."), _buttonStyle, GUILayout.Height(30f)))
         {
             _message = Plugin.Instance != null ? Plugin.Instance.ResetSelfMovementFromQolMenu() : "Self movement is not ready yet.";
             HydrateSelfMovementFields();
@@ -2192,7 +2318,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
             HydrateSelfMovementFields();
             MarkMovementResult(_message);
         }
-        if (GUILayout.Button(new GUIContent("Reset", "Return " + label + " to 1x vanilla."), _buttonStyle, GUILayout.Width(100f), GUILayout.Height(28f)))
+        if (GUILayout.Button(new GUIContent("Reset", "Return " + label + " to the game's normal 1x."), _buttonStyle, GUILayout.Width(100f), GUILayout.Height(28f)))
         {
             _message = Plugin.Instance != null ? Plugin.Instance.SaveSelfMovementMultiplierFromQolMenu(kind, "reset") : "Self movement is not ready yet.";
             HydrateSelfMovementFields();
@@ -2257,12 +2383,12 @@ internal sealed class QolMenuWindow : MonoBehaviour
                 _message = sent
                     ? eggMessage + ". One playful line was sent to lobby chat."
                     : eggMessage + ". Chat was unavailable, so nothing left this client.";
-                MarkAction("Optional lobby joke requested.");
+                MarkActionQuiet("Optional lobby joke requested.");
             }
             else
             {
                 _message = "Already discovered. Repeat presses stay local and send nothing.";
-                MarkAction("Optional lobby joke checked again.");
+                MarkActionQuiet("Optional lobby joke checked again.");
             }
         }
     }
@@ -2316,7 +2442,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
             _message = label + ": " + (entry.Value ? "on." : "off.");
             Plugin.Instance?.ShowToast(label + ": " + (entry.Value ? "On" : "Off"));
             afterChange?.Invoke();
-            MarkSaved(label + " saved " + (entry.Value ? "On." : "Off."));
+            MarkSavedQuiet(label + " saved " + (entry.Value ? "On." : "Off."));
         }
         GUILayout.EndHorizontal();
     }
@@ -2385,7 +2511,17 @@ internal sealed class QolMenuWindow : MonoBehaviour
             if (_settingUndoValues.TryGetValue(label, out string valueBeforeLastSave))
             {
                 value = valueBeforeLastSave;
-                saveAction();
+                // The save inside an Undo must not toast "saved"; only "change undone" does.
+                _suppressSaveToast = true;
+                try
+                {
+                    saveAction();
+                }
+                finally
+                {
+                    _suppressSaveToast = false;
+                }
+
                 _settingUndoValues.Remove(label);
                 _message = label + " restored to its previous saved value.";
                 MarkSaved(label + " change undone.");
@@ -2415,7 +2551,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
             case "Fishing Aid last-round clicks per second":
                 return "How fast the fishing aid clicks in the reel mini-game's last round. Raise it if hard fish escape.";
             case "Lobby welcome message (MOTD)":
-                return "Hosts: the short welcome QoL players see as a toast and chat line when they join your lobby. Leave empty for \"Welcome to my server!\". Also /motd.";
+                return "Hosts: the short welcome QoL players see as a toast and chat line when they join your lobby. Leave empty for \"Welcome to my lobby!\". Also /motd.";
             case "Fly Alt precision (% of fly speed)":
                 return "How fast you fly while holding Alt, as a percent of normal fly speed. Lower is finer for careful positioning.";
             case "Ping sound mode":
@@ -2427,11 +2563,11 @@ internal sealed class QolMenuWindow : MonoBehaviour
             case "Chat outline intensity":
                 return "Percent from 25 to 100. Default 75 is a stronger readable outline; 100 is crispest.";
             case "Whole chat UI scale":
-                return "Percent from 75 to 200. Default 100 keeps vanilla size; larger values scale the whole chat panel, input, backdrop, visible text, and outlines.";
+                return "Percent from 75 to 200. Default 100 keeps the game's size; larger values scale the whole chat panel, input, backdrop, visible text, and outlines.";
             case "Chat font size":
-                return "Percent from 75 to 200. Default 100 keeps vanilla text size; larger values enlarge only message text without scaling the chat shell.";
+                return "Percent from 75 to 200. Default 100 keeps the game's text size; larger values enlarge only message text without scaling the chat shell.";
             case "Chat window height":
-                return "Percent from 100 to 200. Default 100 keeps vanilla height; larger values add vertical chat space and deeper visible scrollback without scaling text.";
+                return "Percent from 100 to 200. Default 100 keeps the game's height; larger values add vertical chat space and deeper visible scrollback without scaling text.";
             case "Normal outline color":
                 return "Hex outline color for normal chat text. Default is black: 000000.";
             case "Black text outline color":
@@ -2443,7 +2579,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
             case "Room name limit":
                 return "Default is 4000, the maximum. Lower it if very long text wraps or clips; past 3000 can look messy.";
             case "Retained chat rows":
-                return "25-250 rows. Default 150 balances useful scrollback with busy-lobby UI cost; BlueSage never lowers a higher vanilla or other-mod limit.";
+                return "25-250 rows. Default 150 balances useful scrollback with busy-lobby UI cost; BlueSage never lowers a higher limit set by the game or another mod.";
             default:
                 return "Edit this safe local config value, then Save.";
         }
@@ -2469,13 +2605,14 @@ internal sealed class QolMenuWindow : MonoBehaviour
         _chatFontSizeText = Plugin.LockedChatFontSizePercent.ToString();
         _chatWindowHeightText = Plugin.LockedChatWindowHeightPercent.ToString();
         _chatHistoryRowsText = Plugin.LockedChatHistoryRows.ToString();
+        _localChatRangeText = Plugin.LockedLocalChatRangeMeters.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
         _chatOutlineColorText = Plugin.LockedChatOutlineColorHex;
         _blackChatOutlineColorText = Plugin.LockedBlackChatOutlineColorHex;
         _chatLimitText = Plugin.LockedMaxChatCharacters.ToString();
         _profileLimitText = Plugin.LockedMaxIdCardCharacters.ToString();
         _sessionLimitText = Plugin.LockedMaxSessionNameCharacters.ToString();
         HydrateSelfMovementFields();
-        MarkSaved("Loaded saved Customize values.");
+        MarkSavedQuiet("Loaded saved Customize values.");
     }
 
     private void HydrateSelfMovementFields()
@@ -2502,13 +2639,33 @@ internal sealed class QolMenuWindow : MonoBehaviour
         _stateDetail = detail ?? "Changes are local until you save or undo.";
     }
 
+    // Round 5h: a saved setting or a finished action also shows as a toast (one shared rule instead of one hand-wired
+    // toast per button). Switches and the few spots that raise their own toast use MarkSavedQuiet.
+    private bool _suppressSaveToast;
+
     private void MarkSaved(string detail)
+    {
+        MarkSavedQuiet(detail);
+        if (!_suppressSaveToast)
+        {
+            Plugin.Instance?.ShowToast(ToastPolicy.Summarize(detail));
+        }
+    }
+
+    private void MarkSavedQuiet(string detail)
     {
         _stateLabel = "Saved";
         _stateDetail = detail ?? "Ready.";
     }
 
     private void MarkAction(string detail)
+    {
+        MarkActionQuiet(detail);
+        Plugin.Instance?.ShowToast(ToastPolicy.Summarize(detail));
+    }
+
+    // Picking a row, a safe preview, a status read-out, or an action whose own code already toasts: footer only.
+    private void MarkActionQuiet(string detail)
     {
         _stateLabel = "Done";
         _stateDetail = detail ?? "Done.";
@@ -2552,8 +2709,8 @@ internal sealed class QolMenuWindow : MonoBehaviour
     {
         if (!int.TryParse(_sweepIntervalText, out int value))
         {
-            _message = "Sweep interval must be a number from 5 to 180.";
-            MarkDraft("Fix sweep interval to a number from 5 to 180.");
+            _message = "Automatic Cleanup interval must be a number from 5 to 180.";
+            MarkDraft("Set the Automatic Cleanup interval to a number from 5 to 180.");
             return;
         }
 
@@ -2562,8 +2719,8 @@ internal sealed class QolMenuWindow : MonoBehaviour
         Plugin.Instance?.SaveConfigFromQolMenu();
         Plugin.Instance?.ReconcileSweepScheduleFromMenu();
         _sweepIntervalText = clamped.ToString();
-        _message = "Sweep interval saved: " + clamped + " minutes.";
-        MarkSaved("Sweep interval saved.");
+        _message = "Automatic Cleanup interval saved: " + clamped + " minutes.";
+        MarkSaved("Automatic Cleanup interval saved.");
     }
 
     private void SaveHex(ConfigEntry<string> entry, string value, string label)
@@ -2689,7 +2846,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         _toastHoldText = Plugin.LockedToastHoldSeconds.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
         _message = "Toast reading time saved: " + _toastHoldText + " seconds.";
         Plugin.Instance?.ShowToast("Toasts now stay for " + _toastHoldText + " seconds.");
-        MarkSaved("Toast reading time saved.");
+        MarkSavedQuiet("Toast reading time saved.");
     }
 
     private void SaveToastScale()
@@ -2717,7 +2874,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         _toastScaleText = Plugin.ToastScalePercent.Value == 0 ? "Auto" : Plugin.ToastScalePercent.Value.ToString();
         _message = "Toast size saved: " + _toastScaleText + ".";
         Plugin.Instance?.ShowToast("Toast size: " + _toastScaleText);
-        MarkSaved("Toast size saved.");
+        MarkSavedQuiet("Toast size saved.");
     }
 
     private void SaveMenuUiScale()
@@ -2795,7 +2952,7 @@ internal sealed class QolMenuWindow : MonoBehaviour
         Plugin.Instance?.SaveConfigFromQolMenu();
         BlueSage.QoLTweaks.Patches.ChatReadabilityPatch.RequestRefreshSoon();
         _chatWindowHeightText = clamped.ToString();
-        _message = "Chat window height saved: " + clamped + "%. Drag the vanilla chat handle if you want to reposition it.";
+        _message = "Chat window height saved: " + clamped + "%. Drag the game's chat handle if you want to move it.";
         MarkSaved("Chat window height saved.");
     }
 
@@ -2824,8 +2981,38 @@ internal sealed class QolMenuWindow : MonoBehaviour
         Plugin.ChatHistoryRows.Value = clamped;
         Plugin.Instance?.SaveConfigFromQolMenu();
         _chatHistoryRowsText = clamped.ToString();
-        _message = "Retained chat rows saved: " + clamped + ". Higher values use more UI memory/work; higher vanilla or other-mod limits are never reduced.";
+        _message = "Retained chat rows saved: " + clamped + ". Higher values use a little more memory; a higher limit set by the game or another mod is never lowered.";
         MarkSaved("Retained chat rows saved.");
+    }
+
+    private void SaveLocalChatRange()
+    {
+        if (Plugin.LocalChatRangeMeters == null)
+        {
+            return;
+        }
+
+        string raw = (_localChatRangeText ?? string.Empty).Trim();
+        if (string.Equals(raw, "reset", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(raw, "default", StringComparison.OrdinalIgnoreCase))
+        {
+            raw = LocalChatRangePolicy.DefaultMeters.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        if (!float.TryParse(raw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float requested) ||
+            float.IsNaN(requested) || float.IsInfinity(requested))
+        {
+            _message = "Local chat range: enter 5-25 meters or reset. Default 15; 5 is the game's own range.";
+            MarkDraft("Fix local chat range to a number from 5 to 25.");
+            return;
+        }
+
+        float clamped = LocalChatRangePolicy.ClampMeters(requested);
+        Plugin.LocalChatRangeMeters.Value = clamped;
+        Plugin.Instance?.SaveConfigFromQolMenu();
+        _localChatRangeText = clamped.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+        _message = "Local chat range saved: " + _localChatRangeText + " m. This only changes which nearby lines you see.";
+        MarkSaved("Local chat range saved.");
     }
 
     private void SavePingSoundMode()

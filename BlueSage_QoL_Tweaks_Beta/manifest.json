@@ -1,8 +1,8 @@
 {
     "name": "BlueSage_QoL_Tweaks_Beta",
-    "version_number": "0.2.5",
+    "version_number": "0.2.7",
     "website_url": "https://discord.gg/JujMEwtN3q",
-    "description": "Cozy On-Together comfort tools: click-to-open menus, in-game hotkeys, a Fishing Aid for sore hands, host welcome messages, Work/Relax stats, readable chat, styling, reconnect help, and safer player helpers.",
+    "description": "Cozy On-Together comfort: click-to-open menus, hotkeys, a Fishing Aid for sore hands, Work/Relax stats with game icons, readable chat, styling, reconnect help, host tools (welcome message, journal, kick, mute). Light, quiet, never during an autosave.",
     "dependencies": [
         "BepInEx-BepInExPack-5.4.2305"
     ]

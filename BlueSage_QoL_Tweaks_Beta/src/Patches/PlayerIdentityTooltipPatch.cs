@@ -100,7 +100,7 @@ internal static class PlayerIdentityTooltipPatch
                 body.text = staleHistoryRow
                     ? "Player-history row; not in the current lobby.\nProfile opens, but moderation stays locked."
                     : liveSteamCheck
-                        ? "Live game/PurrNet row; this SteamID is absent from current Steam lobby membership.\nProfile opens; identity-sensitive actions remain locked."
+                        ? "Live in game, but missing from Steam's lobby list (usually an automatic reconnect).\nProfile opens; host moderation works and is labeled RECONNECTED."
                     : "Live identity is still syncing.\nReopen the player list before using this row.";
             }
         }

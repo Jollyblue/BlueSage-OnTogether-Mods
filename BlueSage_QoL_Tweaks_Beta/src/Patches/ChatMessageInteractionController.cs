@@ -220,9 +220,9 @@ internal sealed class ChatMessageInteractionController :
         PlayClickCue();
         Plugin.AddLocalNotification(
             Plugin.FormatBlueSageAction(
-                "Exact identity evidence copied locally",
-                "Evidence only; revalidate the current native row before " +
-                "moderation.",
+                "Player details copied",
+                "For reference only. Check the player in the player list " +
+                "before taking any action.",
                 warning: true));
     }
 

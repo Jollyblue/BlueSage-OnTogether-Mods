@@ -13,12 +13,11 @@ namespace BlueSage.QoLTweaks;
 
 internal sealed class SessionAuditController : MonoBehaviour
 {
-    private const long MaxChatPartBytes = 16L * 1024L * 1024L;
-    private const long MaxBepInExPartBytes = 64L * 1024L * 1024L;
-    private const int MaxChatParts = 4;
-    private const int MaxBepInExParts = 2;
-    private const int MaxRetainedSessions = 12;
-    private const int RetentionDays = 14;
+    // Round 5d: ceilings live in LocalFileBudgetPolicy (0.2.6 allowed 12 sessions of 2 x 64 MiB mirror + 4 x 16 MiB chat).
+    private const long MaxChatPartBytes = LocalFileBudgetPolicy.AuditChatPartBytes;
+    private const long MaxBepInExPartBytes = LocalFileBudgetPolicy.AuditMirrorPartBytes;
+    private const int MaxChatParts = LocalFileBudgetPolicy.AuditChatParts;
+    private const int MaxBepInExParts = LocalFileBudgetPolicy.AuditMirrorParts;
     private const int MirrorChunkBytes = 512 * 1024;
 
     private static SessionAuditController _instance;
@@ -26,6 +25,7 @@ internal sealed class SessionAuditController : MonoBehaviour
     private readonly Dictionary<string, NativeBanRecord> _nativeBanSnapshot = new Dictionary<string, NativeBanRecord>(StringComparer.Ordinal);
     private readonly AuditMirrorTransferBuffer _bepInExMirrorBuffer = new AuditMirrorTransferBuffer();
     private string _sessionDirectory = string.Empty;
+    private string _sessionStamp = string.Empty;
     private string _chatPath = string.Empty;
     private string _bepInExPath = string.Empty;
     private StreamWriter _chatWriter;
@@ -39,16 +39,11 @@ internal sealed class SessionAuditController : MonoBehaviour
     private bool _wasDisabled;
     private bool _suppressNextBanBaselineEvents;
 
-    internal static string AuditRoot
-    {
-        get
-        {
-            try { return Path.Combine(Paths.BepInExRootPath, "BlueSageAudit"); }
-            catch { return Path.Combine(Environment.CurrentDirectory, "BepInEx", "BlueSageAudit"); }
-        }
-    }
+    // Round 5d: BlueSageQoLModSuite/logs, one <yyyy-MM-dd_HHmmss>-session folder per game session (local time).
+    internal static string AuditRoot => ModSuitePaths.Current.Logs;
 
-    internal static bool Enabled => Plugin.EnableLocalAuditExports != null && Plugin.EnableLocalAuditExports.Value;
+    // While the folder move is unfinished the optional audit stays off for the session (no files in two places).
+    internal static bool Enabled => Plugin.EnableLocalAuditExports != null && Plugin.EnableLocalAuditExports.Value && !ModSuitePaths.Current.LegacyMode;
     internal static string CurrentSessionDirectory => _instance?._sessionDirectory ?? AuditRoot;
     internal static string CurrentChatPath => _instance?._chatPath ?? Path.Combine(AuditRoot, "chat-audit-not-started.jsonl");
     internal static string CurrentBepInExPath => _instance?._bepInExPath ?? Path.Combine(AuditRoot, "bepinex-not-started.log");
@@ -58,6 +53,9 @@ internal sealed class SessionAuditController : MonoBehaviour
         _instance = this;
         DontDestroyOnLoad(gameObject);
         EnsureInitialized();
+        // Round 5d: older sessions are packed into archive zips and old zips removed, off the main thread, whether
+        // or not the audit is on; the session this run is writing is never touched.
+        ModSuitePaths.RunRetentionInBackground(_sessionDirectory);
     }
 
     private void Update()
@@ -283,31 +281,40 @@ internal sealed class SessionAuditController : MonoBehaviour
 
     internal static string StatusText()
     {
-        if (!Enabled) return "Local session audit: off. Use /auditlog on to resume local chat and BepInEx exports.";
+        if (!Enabled) return OffText;
         if (_instance == null || _instance._initializationFailed || _instance._chatWriter == null || _instance._bepInExWriter == null)
-            return "Local session audit: configured on but NOT WRITING. Use /auditlog on to retry; check the BepInEx log for the local file error before relying on incident evidence.";
-        bool identity = Plugin.CanUseLobbySafety(out bool isHost);
-        string identityText = identity
-            ? (isHost ? "exact identity enrichment active for host" : "exact identity enrichment active for assigned Helper")
-            : "normal-client transcript; exact Steam IDs are not added by BlueSage";
-        return "Local session audit: on; " + identityText + ". Chat JSONL and a running BepInEx mirror are stored under " + CurrentSessionDirectory + ". Snapshot Now creates a fresh timestamped copy of the true live BepInEx LogOutput.log.";
+            return WriteTroubleText;
+        return "Local Audit is on. Your files are in " + CurrentSessionDirectory + ". A snapshot saves the newest 8 MB of your game log as one file; the 2 newest are kept for each session.";
     }
+
+    // Voice pass (2026-10-23): one calm "Local Audit" voice. Details (writer errors, identity enrichment) stay in
+    // the log and the folder README; the player hears what is on, where it is, and what to try.
+    internal const string OffText = "Local Audit is off (that's the default). Type /auditlog on if you'd like to keep local log copies.";
+    internal const string WriteTroubleText = "Local Audit is on but couldn't save files just now. Try /auditlog on again in a moment.";
+    internal const string SnapshotFailedText = "The snapshot couldn't be saved this time. Nothing was lost; try again in a moment.";
+    internal const string ResumedText = "Local Audit is back on. Anything from while it was off wasn't saved.";
 
     internal static string CopyAuditFolder()
     {
         GUIUtility.systemCopyBuffer = CurrentSessionDirectory;
-        return "Local audit folder copied. It stays on this computer until you choose to share it.";
+        return "Local Audit folder copied. It stays on this computer until you choose to share it.";
     }
 
     internal static string SnapshotNow()
     {
-        if (!Enabled || _instance == null) return "Local session audit is off.";
+        if (!Enabled || _instance == null) return OffText;
         _instance.EnsureInitialized();
         if (_instance._initializationFailed || _instance._chatWriter == null || _instance._bepInExWriter == null)
-            return "Local audit snapshot FAILED: one or both local writers are unavailable. Use /auditlog on to retry, then /auditlog status before relying on the export.";
+        {
+            Plugin.Log?.LogWarning("Local audit snapshot failed: one or both local writers are unavailable.");
+            return SnapshotFailedText;
+        }
         _instance.MirrorBepInExLog(8 * 1024 * 1024);
         if (_instance._initializationFailed || _instance._chatWriter == null || _instance._bepInExWriter == null)
-            return "Local audit snapshot FAILED while mirroring BepInEx output. Use /auditlog on to retry, then /auditlog status before relying on the export.";
+        {
+            Plugin.Log?.LogWarning("Local audit snapshot failed while mirroring BepInEx output.");
+            return SnapshotFailedText;
+        }
         _instance.WriteRosterCheckpoint();
         _instance.PollNativeBanStore();
         try
@@ -318,23 +325,24 @@ internal sealed class SessionAuditController : MonoBehaviour
         catch (Exception ex)
         {
             _instance.MarkCaptureFailed("snapshot flush", ex);
-            return "Local audit snapshot FAILED while flushing files. Use /auditlog on to retry, then /auditlog status before relying on the export.";
+            return SnapshotFailedText;
         }
         string sourceLogPath = Path.Combine(Paths.BepInExRootPath, "LogOutput.log");
         if (!AuditSnapshotPolicy.TryCreate(
                 sourceLogPath,
                 _instance._sessionDirectory,
-                DateTime.UtcNow,
-                Guid.NewGuid().ToString("N").Substring(0, 8),
-                out string snapshotDirectory,
+                DateTime.Now,
+                out string snapshotPath,
                 out long capturedBytes,
                 out string error))
         {
-            return "Local audit snapshot FAILED while copying the true BepInEx LogOutput.log: " + error;
+            Plugin.Log?.LogWarning("Local audit snapshot failed while copying the true BepInEx LogOutput.log: " + error);
+            return SnapshotFailedText;
         }
 
-        GUIUtility.systemCopyBuffer = snapshotDirectory;
-        return "Local audit snapshot saved: " + snapshotDirectory + " (" + capturedBytes + " bytes from the true BepInEx LogOutput.log). The snapshot folder path was copied.";
+        GUIUtility.systemCopyBuffer = snapshotPath;
+        Plugin.Log?.LogInfo("Local audit snapshot saved: " + capturedBytes + " bytes from the true BepInEx LogOutput.log.");
+        return "Snapshot saved: " + snapshotPath + ". Its file path is copied, ready to paste.";
     }
 
     internal static void ReconcileEnabledState()
@@ -353,7 +361,7 @@ internal sealed class SessionAuditController : MonoBehaviour
             if (resumed)
                 _instance.AppendChatLine(SessionAuditPolicy.BuildNotificationRecord(
                     UtcNow(),
-                    "Local audit capture resumed after an opt-out gap; events from the disabled period were not backfilled.",
+                    ResumedText,
                     CurrentAuditLobbyId()));
         }
         else _instance.PauseCapture();
@@ -365,14 +373,14 @@ internal sealed class SessionAuditController : MonoBehaviour
         try
         {
             Directory.CreateDirectory(AuditRoot);
-            PruneOldSessions();
             if (string.IsNullOrWhiteSpace(_sessionDirectory))
             {
-                string sessionToken = DateTime.UtcNow.ToString("yyyyMMddTHHmmssZ") + "-" + Guid.NewGuid().ToString("N").Substring(0, 8);
-                _sessionDirectory = Path.Combine(AuditRoot, "session-" + sessionToken);
+                DateTime started = DateTime.Now;
+                _sessionStamp = ModSuiteLayoutPolicy.Stamp(started);
+                _sessionDirectory = Path.Combine(AuditRoot, ModSuiteLayoutPolicy.SessionFolderName(started));
                 Directory.CreateDirectory(_sessionDirectory);
                 File.WriteAllText(
-                    Path.Combine(_sessionDirectory, "README.txt"),
+                    Path.Combine(_sessionDirectory, _sessionStamp + "-README.txt"),
                     "BlueSage QoL local session audit\r\n" +
                     "Contains a chat/notification JSONL transcript and a running mirror of BepInEx/LogOutput.log.\r\n" +
                     "Chat raw fields are the rendered UI arguments seen after the game's/mods' earlier patches, not a pristine network payload.\r\n" +
@@ -380,7 +388,6 @@ internal sealed class SessionAuditController : MonoBehaviour
                     "The BepInEx mirror faithfully preserves whatever the game and installed mods already write, which may include player identifiers.\r\n" +
                     "These files are never uploaded automatically. Review them before sharing.\r\n",
                     new UTF8Encoding(false));
-                PruneOldSessions();
             }
 
             OpenChatWriter();
@@ -397,7 +404,7 @@ internal sealed class SessionAuditController : MonoBehaviour
 
     private void OpenChatWriter(bool truncate = false)
     {
-        _chatPath = Path.Combine(_sessionDirectory, PartName("chat-audit", _chatPart, ".jsonl"));
+        _chatPath = Path.Combine(_sessionDirectory, PartName(ModSuiteLayoutPolicy.ChatFileStem(_sessionStamp), _chatPart, ".jsonl"));
         _chatWriter = new StreamWriter(new FileStream(_chatPath, truncate ? FileMode.Create : FileMode.Append, FileAccess.Write, FileShare.Read), new UTF8Encoding(false))
         {
             AutoFlush = true,
@@ -406,7 +413,7 @@ internal sealed class SessionAuditController : MonoBehaviour
 
     private void OpenBepInExWriter(bool truncate = false)
     {
-        _bepInExPath = Path.Combine(_sessionDirectory, PartName("bepinex", _bepInExPart, ".log"));
+        _bepInExPath = Path.Combine(_sessionDirectory, PartName(ModSuiteLayoutPolicy.GameLogFileStem(_sessionStamp), _bepInExPart, ".log"));
         _bepInExWriter = new FileStream(_bepInExPath, truncate ? FileMode.Create : FileMode.Append, FileAccess.Write, FileShare.Read);
     }
 
@@ -559,7 +566,7 @@ internal sealed class SessionAuditController : MonoBehaviour
     {
         _initializationFailed = true;
         CloseWriters();
-        Plugin.Log?.LogWarning("Local audit " + operation + " failed; capture is NOT WRITING until /auditlog on retries: " + ex.GetType().Name + ": " + ex.Message);
+        Plugin.Log?.LogWarning("Local audit paused: the " + operation + " could not be written (" + ex.GetType().Name + ": " + ex.Message + "). Type /auditlog on to try again.");
     }
 
     private void PauseCapture()
@@ -587,24 +594,6 @@ internal sealed class SessionAuditController : MonoBehaviour
         }
     }
 
-    private static void PruneOldSessions()
-    {
-        string root = Path.GetFullPath(AuditRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        DirectoryInfo[] sessions = new DirectoryInfo(AuditRoot).GetDirectories("session-*")
-            .OrderByDescending(directory => directory.CreationTimeUtc)
-            .ToArray();
-        DateTime cutoff = DateTime.UtcNow.AddDays(-RetentionDays);
-        for (int index = 0; index < sessions.Length; index++)
-        {
-            DirectoryInfo session = sessions[index];
-            string full = Path.GetFullPath(session.FullName).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) continue;
-            if (index >= MaxRetainedSessions || session.CreationTimeUtc < cutoff)
-            {
-                try { session.Delete(true); } catch { }
-            }
-        }
-    }
 
     private void PruneAuditParts(string pattern, string currentPath, int maximumParts)
     {

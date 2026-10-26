@@ -5,24 +5,16 @@ namespace BlueSage.QoLTweaks.Tests;
 public sealed class PublicDiagnosticsPrivacyContractTests
 {
     [Test]
-    public void Shareable_bepinex_diagnostics_are_timestamped_and_exclude_exact_identity_surfaces()
+    // Round 4 WS2 (Blue, 2026-10-19): the hidden [BlueSageDiag] snapshot that this guarded is removed entirely,
+    // so no shareable diagnostic line can carry identity surfaces any more.
+    public void Hidden_diagnostic_snapshot_is_removed()
     {
         string source = ReadPluginSource();
-        int start = source.IndexOf("private void LogHiddenDiagnosticSnapshot(string reason, HostHealthInput input", StringComparison.Ordinal);
-        int end = source.IndexOf("private static string BuildProcessMemoryDiagnosticSummary()", start, StringComparison.Ordinal);
-        Assert.That(start, Is.GreaterThanOrEqualTo(0));
-        Assert.That(end, Is.GreaterThan(start));
-        string diagnosticMethod = source.Substring(start, end - start);
-
         Assert.Multiple(() =>
         {
-            Assert.That(diagnosticMethod, Does.Contain("utc={DateTime.UtcNow:O}"));
-            Assert.That(diagnosticMethod, Does.Contain("identityDetail=private-audit-only"));
-            Assert.That(diagnosticMethod, Does.Not.Contain("localSteamId="));
-            Assert.That(diagnosticMethod, Does.Not.Contain("lobbyOwnerSteamId="));
-            Assert.That(diagnosticMethod, Does.Not.Contain("lobbyTitle='"));
-            Assert.That(diagnosticMethod, Does.Not.Contain("hostPersona='"));
-            Assert.That(diagnosticMethod, Does.Not.Contain("string.Join(\",\", playerSteamIds)"));
+            Assert.That(source, Does.Not.Contain("LogHiddenDiagnosticSnapshot"));
+            Assert.That(source, Does.Not.Contain("[BlueSageDiag]"));
+            Assert.That(source, Does.Not.Contain("BuildProcessMemoryDiagnosticSummary"));
         });
     }
 

@@ -50,8 +50,8 @@ public sealed class RichTextDraftPolicyTests
     {
         string root = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
         string source = File.ReadAllText(Path.Combine(root, "src", "StyleHelperWindow.cs"));
-        Assert.That(source, Does.Contain("Custom Rich Text mode preserves exact balanced markup"));
-        Assert.That(source, Does.Contain("the game decides whether each tag/value renders"));
+        Assert.That(source, Does.Contain("Your own style codes are kept exactly as typed."));
+        Assert.That(source, Does.Contain("Check the preview; the game decides which codes show."));
         Assert.That(source, Does.Contain("text.IndexOf('<') >= 0"));
     }
 

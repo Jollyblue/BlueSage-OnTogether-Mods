@@ -145,6 +145,22 @@ internal sealed class CommandTypeaheadController : MonoBehaviour
             ["idsync"] = IdentityResyncChoices("idsync"),
             ["identitysync"] = IdentityResyncChoices("identitysync"),
             ["rostersync"] = IdentityResyncChoices("rostersync"),
+            ["auditlog"] = AuditLogChoices("auditlog"),
+            ["sessionaudit"] = AuditLogChoices("sessionaudit"),
+            ["localaudit"] = AuditLogChoices("localaudit"),
+            ["motd"] = new[]
+            {
+                Choice("motd", "clear", "host: go back to the default welcome message")
+            },
+            ["rebind"] = RebindChoices("rebind"),
+            ["bind"] = RebindChoices("bind"),
+            ["kb"] = RebindChoices("kb"),
+            ["keys"] = RebindChoices("keys"),
+            ["fishaid"] = Toggle("fishaid"),
+            ["autofish"] = Toggle("autofish"),
+            ["selfmove"] = SelfMoveChoices("selfmove"),
+            ["bluemove"] = SelfMoveChoices("bluemove"),
+            ["qolmove"] = SelfMoveChoices("qolmove"),
             ["copychat"] = Toggle("copychat"),
             ["ccopy"] = Toggle("ccopy"),
             ["chatlinks"] = Toggle("chatlinks"),
@@ -384,7 +400,7 @@ internal sealed class CommandTypeaheadController : MonoBehaviour
                 .Take(MaxBrowserSuggestions)
                 .Select(value => Choice(command, value, string.Equals(command, "sidban", StringComparison.OrdinalIgnoreCase)
                     ? "Clone Shield suspect; preview before confirming"
-                    : "native banned Steam ID; preview before confirming"))
+                    : "on the game's ban list; preview before confirming"))
                 .ToArray();
             return suggestions.Count > 0;
         }
@@ -406,8 +422,8 @@ internal sealed class CommandTypeaheadController : MonoBehaviour
                 .Where(value => value.StartsWith(currentToken, StringComparison.OrdinalIgnoreCase))
                 .Take(MaxBrowserSuggestions)
                 .Select(value => Choice(command, value, value == "list"
-                    ? "open the authorized verified roster in Lobby Safety"
-                    : "verify this current row before moderation"))
+                    ? "open the matched player list in Lobby Safety"
+                    : "check this player before any action"))
                 .ToArray();
             return suggestions.Count > 0;
         }
@@ -598,11 +614,11 @@ internal sealed class CommandTypeaheadController : MonoBehaviour
             Choice(
                 command,
                 "status",
-                "read-only exact-correlation coverage and last transaction"),
+                "check player matching"),
             Choice(
                 command,
                 "refresh",
-                "local BlueSage surfaces from already-available native state"),
+                "redraw the player list"),
         };
 
         LobbySafetyAccessState access =
@@ -612,17 +628,56 @@ internal sealed class CommandTypeaheadController : MonoBehaviour
             choices.Add(Choice(
                 command,
                 "repair",
-                "verified Host one-shot repair for this stable generation"));
+                "host: recheck player matches"));
         }
         else if (access == LobbySafetyAccessState.HelperReady)
         {
             choices.Add(Choice(
                 command,
                 "request",
-                "authenticated Helper request relayed for Host revalidation"));
+                "ask the host to recheck"));
         }
 
         return choices;
+    }
+
+    private static IReadOnlyList<CommandSuggestion> AuditLogChoices(string command)
+    {
+        return new[]
+        {
+            Choice(command, "on", "start saving your chat and game log copies"),
+            Choice(command, "off", "stop saving; existing files stay"),
+            Choice(command, "status", "show where your copies are saved"),
+            Choice(command, "snapshot", "save the newest 8 MB of the game log"),
+            Choice(command, "path", "copy your log folder path")
+        };
+    }
+
+    private static IReadOnlyList<CommandSuggestion> RebindChoices(string command)
+    {
+        return new[]
+        {
+            Choice(command, "qolmenu", "change the QoL menu key"),
+            Choice(command, "stylemenu", "change the Style Helper key"),
+            Choice(command, "fly", "change the Noclip/Fly key"),
+            Choice(command, "sweep", "change the manual cleanup key"),
+            Choice(command, "reset", "put every key back to its default")
+        };
+    }
+
+    private static IReadOnlyList<CommandSuggestion> SelfMoveChoices(string command)
+    {
+        return new[]
+        {
+            Choice(command, "status", "show your movement settings"),
+            Choice(command, "save", "remember where you're standing"),
+            Choice(command, "teleport", "go back to your saved spot"),
+            Choice(command, "fly", "turn fly on or off"),
+            Choice(command, "speed", "set walk speed (0.25 to 5)"),
+            Choice(command, "jump", "set jump height (0.25 to 5)"),
+            Choice(command, "gravity", "set gravity (0.1 to 5)"),
+            Choice(command, "reset", "put movement back to normal")
+        };
     }
 
     private static IReadOnlyList<CommandSuggestion> CleanupChoices(string command)
@@ -716,15 +771,15 @@ internal sealed class CommandTypeaheadController : MonoBehaviour
     {
         return new[]
         {
-            Choice(command, "boards", "map the current scene-local board indices and locations"),
-            Choice(command, "view", "inspect one exact board locally without changing it"),
-            Choice(command, "clear", "Host/Helper: clear an exact index after a recovery snapshot"),
-            Choice(command, "status", "show chalkboard feature and compatibility state"),
-            Choice(command, "list", "list local recovery and named board saves"),
-            Choice(command, "save", "save a named local board snapshot"),
-            Choice(command, "load", "Host/Helper: request an exact named snapshot restore"),
-            Choice(command, "delete", "delete a local named save after preserving a backup"),
-            Choice(command, "refresh", "refresh the exact local 0-2 board map")
+            Choice(command, "boards", "show which board is 0, 1, and 2"),
+            Choice(command, "view", "look at one board without changing it"),
+            Choice(command, "clear", "host or Helper: clear one board (a backup is saved first)"),
+            Choice(command, "status", "show whether chalkboards are ready"),
+            Choice(command, "list", "list your saved boards and backups"),
+            Choice(command, "save", "save a board under a name"),
+            Choice(command, "load", "host or Helper: ask to put a saved board back"),
+            Choice(command, "delete", "delete one of your saves (a backup is kept)"),
+            Choice(command, "refresh", "find boards 0-2 again")
         };
     }
 
@@ -732,11 +787,11 @@ internal sealed class CommandTypeaheadController : MonoBehaviour
     {
         return new[]
         {
-            Choice(command, "status", "show bounded local upstream validation state"),
-            Choice(command, "refresh", "validate now and append only missing local pairs"),
-            Choice(command, "on", "enable local additive validation"),
-            Choice(command, "off", "disable local additive validation"),
-            Choice(command, "attestation", "show bounded attestation location and state")
+            Choice(command, "status", "show the Community Safety List state"),
+            Choice(command, "refresh", "check the community ban list now; it only adds names, never kicks or bans"),
+            Choice(command, "on", "turn Community Safety List checks on"),
+            Choice(command, "off", "turn Community Safety List checks off"),
+            Choice(command, "attestation", "show technical list details")
         };
     }
 

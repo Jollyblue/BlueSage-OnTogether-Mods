@@ -22,7 +22,7 @@ public sealed class HostConsoleReadinessPolicyTests
         Assert.Multiple(() =>
         {
             Assert.That(snapshot.OverallState, Is.EqualTo(HostConsoleOverallState.Ready));
-            Assert.That(snapshot.Reason, Is.EqualTo("All required host lanes are ready."));
+            Assert.That(snapshot.Reason, Is.EqualTo("All host checks are ready."));
             Assert.That(snapshot.ProviderState, Is.EqualTo("Optional / off"));
             Assert.That(snapshot.RelayState, Is.EqualTo("Optional / off"));
         });
@@ -37,11 +37,11 @@ public sealed class HostConsoleReadinessPolicyTests
         Assert.Multiple(() =>
         {
             Assert.That(snapshot.OverallState, Is.EqualTo(HostConsoleOverallState.Unavailable));
-            Assert.That(snapshot.Reason, Does.Contain("verified lobby host"));
+            Assert.That(snapshot.Reason, Does.Contain("not the host of this lobby"));
         });
     }
 
-    [TestCase(false, true, true, "roster")]
+    [TestCase(false, true, true, "matching players")]
     [TestCase(true, false, true, "cleanup")]
     [TestCase(true, true, false, "reconnect")]
     public void First_unhealthy_required_lane_is_named_without_identity(
@@ -74,7 +74,7 @@ public sealed class HostConsoleReadinessPolicyTests
         {
             Assert.That(optional.OverallState, Is.EqualTo(HostConsoleOverallState.Ready));
             Assert.That(required.OverallState, Is.EqualTo(HostConsoleOverallState.Degraded));
-            Assert.That(required.Reason.ToLowerInvariant(), Does.Contain("provider"));
+            Assert.That(required.Reason.ToLowerInvariant(), Does.Contain("add-on"));
         });
     }
 }

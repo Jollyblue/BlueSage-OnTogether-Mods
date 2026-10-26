@@ -40,6 +40,17 @@ internal static class WorkRelaxRuntimeController
     private static int _nativeObservationDepth;
     private static bool _reconciliationPending;
     private static bool _shutdownFlushClaimed;
+    // Round 4 Stage G (Marbles, 2026-10-20): saves are decoupled from the game's autosave frame. Changes mark the
+    // ledger dirty here; Plugin.Update calls FlushIfDue on later frames and the store writes a snapshot off-thread.
+    private static bool _dirty;
+    private static bool _dirtyPrompt;
+    private static long _dirtySinceTicks;
+    // Round 5 Stage A: the UTC day of the last CompactHistory run (0 until the ledger is initialized).
+    private static long _lastCompactionUtcDay;
+    private static long _lastWriteTicks;
+    private static long _nextInitializeAttemptUtcTicks;
+    private const int ShutdownWriteWaitMilliseconds = 3000;
+    private const long InitializeRetryTicks = TimeSpan.TicksPerSecond * 5;
 
     internal static WorkRelaxMode CurrentMode
     {
@@ -96,7 +107,7 @@ internal static class WorkRelaxRuntimeController
                 }
 
                 string profileKey = WorkRelaxProfileKey.Create(((ulong)steamId).ToString());
-                _store = WorkRelaxLedgerStore.FromConfigPath(Paths.ConfigPath, profileKey);
+                _store = WorkRelaxLedgerStore.ForLedgerDirectory(ModSuitePaths.Current.WorkRelaxDirectory, profileKey, ModSuitePaths.Current.WorkRelaxFilePrefix);
                 WorkRelaxLedgerLoadResult loaded = _store.Load();
                 WorkRelaxMode restoredMode = ParseSavedMode(loaded.Ledger?.LastMode);
                 _ledger = loaded.Ledger ?? WorkRelaxLedger.Create(profileKey, snapshot, WorkRelaxMode.Work);
@@ -110,7 +121,40 @@ internal static class WorkRelaxRuntimeController
 
                 if (loaded.Ledger == null || loaded.RecoveredFromBackup)
                 {
-                    SaveFailOpen(loaded.Ledger == null ? "initial baseline" : "backup recovery");
+                    MarkDirty(prompt: true, loaded.Ledger == null ? "initial baseline" : "backup recovery");
+                }
+
+                // Round 5d: Today/Week/Month rows written by 0.2.6 and older repeat their Total row; drop them once
+                // (rows a correction points at stay). Before the fold, so folded days carry only kept metrics.
+                int stripped = _ledger.StripDerivedRows();
+                if (stripped > 0)
+                {
+                    Plugin.Log?.LogInfo("Work / Relax ledger: removed " + stripped + " Today/Week/Month rows that repeated their totals; the Report now works them out from the totals.");
+                    MarkDirty(prompt: true, "derived rows removed");
+                }
+
+                // Stage G (Marbles' 11 MB ledger): fold history older than the retention window once per session.
+                long initUtcTicks = DateTime.UtcNow.Ticks;
+                int compacted = _ledger.CompactHistory(initUtcTicks);
+                _lastCompactionUtcDay = WorkRelaxLedgerCompactionSchedulePolicy.UtcDay(initUtcTicks);
+                if (compacted > 0)
+                {
+                    Plugin.Log?.LogInfo("Work / Relax ledger: folded " + compacted + " history rows older than " +
+                                        WorkRelaxLedgerCompactionPolicy.RetentionDays + " days into daily rows; totals unchanged.");
+                    MarkDirty(prompt: true, "history compaction");
+                }
+
+                // Round 5 Stage A: a ledger written before coalescing holds one row per focus minute; fold those
+                // minutes into stretches once (O(n), measured under 50 ms on a 21k-row file; the 5 MB deserialize
+                // above is the cost that already exists). Idempotent: a coalesced ledger folds nothing.
+                var coalesceWatch = System.Diagnostics.Stopwatch.StartNew();
+                int coalesced = _ledger.CoalesceHistory();
+                coalesceWatch.Stop();
+                if (coalesced > 0)
+                {
+                    Plugin.Log?.LogInfo("Work / Relax ledger: joined " + coalesced + " focus-minute rows into stretches in " +
+                                        coalesceWatch.ElapsedMilliseconds + " ms; totals unchanged.");
+                    MarkDirty(prompt: true, "history coalescing");
                 }
 
                 return true;
@@ -144,7 +188,7 @@ internal static class WorkRelaxRuntimeController
             _durationCursors?.SwitchMode(mode, now);
 
             _ledger.LastMode = ModeName(mode);
-            SaveFailOpen("mode change");
+            MarkDirty(prompt: true, "mode change");
             return true;
         }
     }
@@ -183,7 +227,7 @@ internal static class WorkRelaxRuntimeController
                 ? new NativeAchievementSummary(achievementSnapshot.Count(item => item.Unlocked), achievementSnapshot.Length)
                 : null;
             projection = BuildProjection(snapshot, achievementSummary, DateTime.UtcNow);
-            if (moodsAvailable || achievementsAvailable) SaveFailOpen("BlueSage Report refresh");
+            if (moodsAvailable || achievementsAvailable) MarkDirty(prompt: true, "BlueSage Report refresh");
             return true;
         }
     }
@@ -210,7 +254,7 @@ internal static class WorkRelaxRuntimeController
             {
                 if (fromMode != WorkRelaxAttributionMode.Unclassified)
                 {
-                    reason = "Aggregate mood allocation can move only Unclassified observations.";
+                    reason = "Only unlabelled check-ins can be moved.";
                     return false;
                 }
                 try
@@ -219,12 +263,12 @@ internal static class WorkRelaxRuntimeController
                         metricKey, amount, toMode, _ledger.Events, _ledger.Corrections);
                     foreach (WorkRelaxCorrection correction in moodBatch.Corrections)
                         AppendCorrection(correction, moodBatch.BatchId, null);
-                    SaveFailOpen("BlueSage Report mood allocation");
+                    MarkDirty(prompt: true, "BlueSage Report mood allocation");
                     return true;
                 }
                 catch (Exception exception)
                 {
-                    reason = exception.Message;
+                    reason = WorkRelaxCorrectionPolicy.PlayerMessage(exception);
                     return false;
                 }
             }
@@ -245,12 +289,12 @@ internal static class WorkRelaxRuntimeController
                 CorrectionResult result = WorkRelaxCorrectionPolicy.Reclassify(metricKey, balance, fromMode, toMode,
                     amount, targetEventId);
                 AppendCorrection(result.Correction, "batch-" + Guid.NewGuid().ToString("N"), null);
-                SaveFailOpen("BlueSage Report correction");
+                MarkDirty(prompt: true, "BlueSage Report correction");
                 return true;
             }
             catch (Exception exception)
             {
-                reason = exception.Message;
+                reason = WorkRelaxCorrectionPolicy.PlayerMessage(exception);
                 return false;
             }
         }
@@ -278,12 +322,12 @@ internal static class WorkRelaxRuntimeController
                 }
                 foreach (WorkRelaxCorrection correction in batch.Corrections)
                     AppendCorrection(correction, batch.BatchId, null);
-                SaveFailOpen("BlueSage Report session correction");
+                MarkDirty(prompt: true, "BlueSage Report session correction");
                 return true;
             }
             catch (Exception exception)
             {
-                reason = exception.Message;
+                reason = WorkRelaxCorrectionPolicy.PlayerMessage(exception);
                 return false;
             }
         }
@@ -312,14 +356,38 @@ internal static class WorkRelaxRuntimeController
                     _ledger.Events, _ledger.Corrections, latest);
                 foreach (WorkRelaxCorrection correction in undo.Corrections)
                     AppendCorrection(correction, undo.BatchId, undo.TargetBatchId);
-                SaveFailOpen("BlueSage Report undo");
+                MarkDirty(prompt: true, "BlueSage Report undo");
                 return true;
             }
             catch (Exception exception)
             {
-                reason = exception.Message;
+                reason = WorkRelaxCorrectionPolicy.PlayerMessage(exception);
                 return false;
             }
+        }
+    }
+
+    // Round 4 Stage G (advisor catch): game hooks never initialize. For a player whose startup init found no
+    // DataManager yet (both live logs show it), the first hook to fire used to be the autosave postfix, which then
+    // deserialized the whole ledger on that very frame. Plugin.Update retries initialization instead.
+    private static bool IsReady => _ledger != null && _store != null && _modeController != null && _durationCursors != null;
+
+    internal static void TryInitializeIfDue(long nowUtcTicks)
+    {
+        lock (Gate)
+        {
+            if (IsReady || _shutdownFlushClaimed)
+            {
+                return;
+            }
+
+            if (_nextInitializeAttemptUtcTicks != 0 && nowUtcTicks < _nextInitializeAttemptUtcTicks && nowUtcTicks >= _nextInitializeAttemptUtcTicks - InitializeRetryTicks)
+            {
+                return;
+            }
+
+            _nextInitializeAttemptUtcTicks = nowUtcTicks + InitializeRetryTicks;
+            TryInitialize();
         }
     }
 
@@ -329,7 +397,7 @@ internal static class WorkRelaxRuntimeController
     {
         lock (Gate)
         {
-            if (!TryInitialize())
+            if (!IsReady)
             {
                 return null;
             }
@@ -405,7 +473,7 @@ internal static class WorkRelaxRuntimeController
     {
         lock (Gate)
         {
-            if (!TryInitialize() || _modeController == null || _durationCursors == null)
+            if (!IsReady || _modeController == null || _durationCursors == null)
             {
                 return;
             }
@@ -430,7 +498,7 @@ internal static class WorkRelaxRuntimeController
     {
         lock (Gate)
         {
-            if (!TryInitialize() || _modeController == null || _durationCursors == null)
+            if (!IsReady || _modeController == null || _durationCursors == null)
             {
                 return;
             }
@@ -456,7 +524,7 @@ internal static class WorkRelaxRuntimeController
     {
         lock (Gate)
         {
-            if (!TryInitialize() || _ledger == null)
+            if (!IsReady || _ledger == null)
             {
                 return;
             }
@@ -480,7 +548,9 @@ internal static class WorkRelaxRuntimeController
                 NativeEpochMarkers currentEpoch = ReadEpoch(current);
                 foreach (WorkRelaxMetricDefinition metric in WorkRelaxMetricCatalog.NativeMetrics)
                 {
-                    if (!metric.IsAdditive || string.Equals(metric.Key, "FocusSessionsPerDay", StringComparison.Ordinal))
+                    // Round 5d: derived keys have no rows to reconcile; reconciling them would write an Unclassified row
+                    // per key per save and bring the file size back.
+                    if (!metric.IsAdditive || metric.IsDerived || string.Equals(metric.Key, "FocusSessionsPerDay", StringComparison.Ordinal))
                     {
                         continue;
                     }
@@ -499,7 +569,8 @@ internal static class WorkRelaxRuntimeController
                 ReconcileWeekdayBuckets(previous, current, previousEpoch, currentEpoch);
                 _ledger.LastReconciled = WorkRelaxLedgerStatistics.FromNativeSnapshot(current);
                 PendingAttributedDeltas.Clear();
-                SaveFailOpen("native reconciliation");
+                // Stage G: this runs inside the game's autosave frame. Only mark; the write happens later, off-thread.
+                MarkDirty(prompt: false, "native reconciliation");
             }
             catch (Exception exception)
             {
@@ -524,8 +595,82 @@ internal static class WorkRelaxRuntimeController
                 return;
             }
 
+            // Stage G: let a background write finish so the two never race on the temp file, then the one
+            // synchronous, disk-synced save of the session.
+            if (_store != null && !_store.WaitForBackgroundWrite(ShutdownWriteWaitMilliseconds))
+            {
+                LogOnce("shutdown-wait", "Work / Relax ledger: a background write was still running at shutdown; the final save proceeds.");
+            }
+
             SaveFailOpen("shutdown");
+            _dirty = false;
+            _dirtyPrompt = false;
         }
+    }
+
+    // Round 4 Stage G: called from Plugin.Update every frame. Cheap when clean. When due, a deep clone goes to the
+    // store's worker thread; the live ledger is never serialized on the main thread again.
+    internal static void FlushIfDue(long nowUtcTicks)
+    {
+        lock (Gate)
+        {
+            if (_shutdownFlushClaimed || _store == null || _ledger == null)
+            {
+                return;
+            }
+
+            // Round 5 Stage A: the day-boundary fold also runs while the game is running, not only at startup.
+            if (WorkRelaxLedgerCompactionSchedulePolicy.IsDue(_lastCompactionUtcDay, nowUtcTicks))
+            {
+                _lastCompactionUtcDay = WorkRelaxLedgerCompactionSchedulePolicy.UtcDay(nowUtcTicks);
+                int folded = _ledger.CompactHistory(nowUtcTicks);
+                if (folded > 0)
+                {
+                    Plugin.Log?.LogInfo("Work / Relax ledger: day rolled over; folded " + folded + " history rows into daily rows; totals unchanged.");
+                    MarkDirty(prompt: false, "day-boundary compaction");
+                }
+            }
+
+            if (!WorkRelaxLedgerSavePolicy.IsDue(_dirty, _dirtyPrompt, _dirtySinceTicks, _lastWriteTicks, nowUtcTicks, _store.IsWriteInFlight))
+            {
+                return;
+            }
+
+            WorkRelaxLedger snapshot = _ledger.Clone();
+            _dirty = false;
+            _dirtyPrompt = false;
+            _lastWriteTicks = nowUtcTicks;
+            bool queued = _store.SaveInBackground(snapshot, error =>
+            {
+                if (error == null)
+                {
+                    return;
+                }
+
+                LogOnce("background-save-" + error.GetType().Name,
+                    "Work / Relax ledger background save failed safely: " + error.GetType().Name + ": " + error.Message + ". It will be retried.");
+                lock (Gate)
+                {
+                    MarkDirty(prompt: false, "background save retry");
+                }
+            });
+            if (!queued)
+            {
+                MarkDirty(prompt: false, "background writer busy");
+            }
+        }
+    }
+
+    // Callers hold Gate. Prompt changes (mode, corrections) write a second later; routine ones wait a minute.
+    private static void MarkDirty(bool prompt, string reason)
+    {
+        if (!_dirty)
+        {
+            _dirty = true;
+            _dirtySinceTicks = DateTime.UtcNow.Ticks;
+        }
+
+        _dirtyPrompt |= prompt;
     }
 
     internal static void LogOnce(string key, string message)
@@ -562,6 +707,12 @@ internal static class WorkRelaxRuntimeController
         foreach (ObservedNativeMetricDelta candidate in positive)
         {
             WorkRelaxMetricDefinition metric = candidate.Metric;
+            if (metric.IsDerived)
+            {
+                // Round 5d: Today/Week/Month move with their Total in this same call; the Report derives them.
+                continue;
+            }
+
             double amount = candidate.Amount;
             if (metric.Family == WorkRelaxMetricFamily.PomodoroDuration)
             {
@@ -761,7 +912,8 @@ internal static class WorkRelaxRuntimeController
         WorkRelaxMetricDefinition metric = decision.MetricKey.StartsWith("FocusSessionsPerDay[", StringComparison.Ordinal)
             ? WorkRelaxMetricCatalog.GetWeekdayBucket(ParseWeekdayIndex(decision.MetricKey))
             : WorkRelaxMetricCatalog.Get(decision.MetricKey);
-        _ledger.AppendEvent(new WorkRelaxLedgerEvent
+        // Stage G: same-day rows for one metric merge (see WorkRelaxLedger.AppendReconciliationEvent).
+        _ledger.AppendReconciliationEvent(new WorkRelaxLedgerEvent
         {
             EventId = Guid.NewGuid().ToString("N"),
             UtcTicks = DateTime.UtcNow.Ticks,
@@ -769,7 +921,7 @@ internal static class WorkRelaxRuntimeController
             MetricKey = metric.Key,
             Amount = decision.Amount,
             Mode = WorkRelaxAttributionMode.Unclassified.ToString(),
-            Source = "Native reconciliation"
+            Source = WorkRelaxLedger.ReconciliationSource
         });
     }
 

@@ -632,16 +632,6 @@ internal static class ChatReadabilityPatch
         }
     }
 
-    internal static string GetDiagnosticStateSummary()
-    {
-        return "text=" + OriginalTextStates.Count +
-               ",font=" + OriginalFontSizes.Count +
-               ",backdrop=" + OriginalBackdropColors.Count +
-               ",overlay=" + OwnedBackdropOverlays.Count +
-               ",scale=" + OriginalSurfaceScales.Count +
-               ",window=" + OriginalSurfaceWindowSizes.Count;
-    }
-
     private static void ApplyReadability(GameObject messageRow)
     {
         if (messageRow == null)

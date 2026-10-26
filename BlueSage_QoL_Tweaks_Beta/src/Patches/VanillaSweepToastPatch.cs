@@ -1,4 +1,5 @@
 using System;
+using BlueSage.QoLTweaks.Core;
 using HarmonyLib;
 
 namespace BlueSage.QoLTweaks.Patches;
@@ -8,15 +9,17 @@ namespace BlueSage.QoLTweaks.Patches;
 // postfix on the iterator method fires when that coroutine is created, i.e. as the cleanup starts,
 // so players know why the game may hitch for a moment. BlueSage's own sweeps also create this
 // iterator (by reflection) and announce themselves, so those are skipped here.
+// Voice pass (2026-10-23): automatic cleanups are quiet by default, so this toast shows only when
+// NotifyOnSweep (cleanup notices) is on.
 [HarmonyPatch(typeof(MainSceneManager), "SweepRoutine")]
 internal static class VanillaSweepToastPatch
 {
-    internal const string VanillaSweepToastText = "The game is doing its own 30-minute tidy-up; a short hitch is normal.";
+    internal const string VanillaSweepToastText = SweepMenuActionPolicy.GameCleanupToast;
 
     [HarmonyPostfix]
     private static void Postfix()
     {
-        if (Plugin.IsQolSweepCreatingNativeRoutine)
+        if (!SweepMenuActionPolicy.ShouldToastGameCleanup(Plugin.IsQolSweepCreatingNativeRoutine, Plugin.NotifyOnSweep?.Value == true))
         {
             return;
         }

@@ -108,8 +108,8 @@ public sealed class WorkRelaxOverlayLayoutTests
                 Assert.That(Intersects(layout.QolMenu, other), Is.False);
                 Assert.That(Intersects(layout.StyleMenu, other), Is.False);
             }
-            Assert.That(WorkRelaxOverlayLayoutPolicy.QolMenuLabel, Is.EqualTo("QoL-Menu"));
-            Assert.That(WorkRelaxOverlayLayoutPolicy.StyleMenuLabel, Is.EqualTo("Styler-Menu"));
+            Assert.That(WorkRelaxOverlayLayoutPolicy.QolMenuLabel, Is.EqualTo("QoL Menu"));
+            Assert.That(WorkRelaxOverlayLayoutPolicy.StyleMenuLabel, Is.EqualTo("Style Helper"));
         });
     }
 

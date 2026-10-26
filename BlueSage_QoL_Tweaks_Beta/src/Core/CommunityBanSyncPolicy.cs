@@ -83,22 +83,24 @@ internal static class CommunityBanSyncPolicy
         CommunityBanSyncStatus safe = status ?? new CommunityBanSyncStatus();
         if (!safe.Enabled)
         {
-            return "Community safety list is off.";
+            return "Community Safety List: off.";
         }
 
         if (BoundError(safe.BoundedError).Length > 0)
         {
-            return "Community safety list could not refresh safely. Your existing local list was left unchanged.";
+            return "Community Safety List: couldn't update this time. Your saved list wasn't changed.";
         }
 
         if (safe.LastSuccessUtc.HasValue)
         {
-            return "Community safety list ready: " +
-                   Math.Max(0, safe.AcceptedCount).ToString(CultureInfo.InvariantCulture) +
-                   " trusted entries checked locally. No player action was taken.";
+            int names = Math.Max(0, safe.AcceptedCount);
+            return "Community Safety List: up to date, " +
+                   names.ToString(CultureInfo.InvariantCulture) +
+                   (names == 1 ? " name." : " names.") +
+                   " It only adds names; it never kicks or bans.";
         }
 
-        return "Community safety list is on and will check locally when ready.";
+        return "Community Safety List: on. It will check the list shortly.";
     }
 
     internal static string BuildAttestationJson(CommunityBanSyncStatus status)

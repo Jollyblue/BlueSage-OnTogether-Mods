@@ -16,6 +16,23 @@ public sealed class OfflineBanPolicyTests
         Assert.That(reason, Is.Empty);
     }
 
+    // Stage C, review P2: a Steam lobby member with no live row yet is not "absent", so it does not pass CanSave's
+    // absent flag; the same host-only rules apply through their own entry point.
+    [Test]
+    public void ActiveHostMaySaveATargetWithNoLiveRowUnderTheSameRules()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(OfflineBanPolicy.CanSaveWithoutLiveRow(Owner, Owner, Target, Helper, false, out string reason), Is.True);
+            Assert.That(reason, Is.Empty);
+            Assert.That(OfflineBanPolicy.CanSaveWithoutLiveRow(Owner, Helper, Target, Helper, false, out string helperReason), Is.False, "Helpers never originate it.");
+            Assert.That(helperReason, Does.Contain("active lobby host"));
+            Assert.That(OfflineBanPolicy.CanSaveWithoutLiveRow(Owner, Owner, Target, Helper, true, out _), Is.False, "Protected victims stay protected.");
+            Assert.That(OfflineBanPolicy.CanSaveWithoutLiveRow(Owner, Owner, Helper, Helper, false, out _), Is.False, "Helpers must be removed first.");
+            Assert.That(OfflineBanPolicy.CanSave(Owner, Owner, Target, Helper, false, false, out _), Is.False, "CanSave still demands a confirmed absent target.");
+        });
+    }
+
     [Test]
     public void HelperMayNotOriginateOffRosterBan()
     {

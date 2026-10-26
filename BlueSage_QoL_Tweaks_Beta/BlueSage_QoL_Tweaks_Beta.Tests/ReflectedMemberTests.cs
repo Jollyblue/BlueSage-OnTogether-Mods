@@ -63,8 +63,10 @@ public sealed class ReflectedMemberTests
             Assert.That(counts, Does.Contain("ReflectedMember.TryRead(currentLobby, \"Members\""));
             Assert.That(counts, Does.Contain("ReflectedMember.TryRead(currentLobby, \"MaxPlayers\""));
             Assert.That(counts, Does.Not.Contain("GetProperty(\"Members\")").And.Not.Contain("GetProperty(\"MaxPlayers\")"));
-            Assert.That(Slice(plugin, "private static bool TryReadStringProperty(", "\n    }\n"), Does.Contain("ReflectedMember.TryRead(target, name"));
-            Assert.That(Slice(plugin, "private static bool TryReadBoolProperty(", "\n    }\n"), Does.Contain("ReflectedMember.TryRead(target, name"));
+            // Round 4 R9: TryReadStringProperty/TryReadBoolProperty were part of the removed lobby-surface
+            // diagnostics chain; the lobby-count readback above is the one live ReflectedMember consumer in Plugin.cs.
+            Assert.That(plugin, Does.Not.Contain("private static bool TryReadStringProperty("));
+            Assert.That(plugin, Does.Not.Contain("private static bool TryReadBoolProperty("));
         });
     }
 

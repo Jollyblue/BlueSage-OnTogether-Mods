@@ -13,11 +13,11 @@ public sealed class SessionAuditContractTests
         string menu = Read("src", "QolMenuWindow.cs");
         Assert.Multiple(() =>
         {
-            Assert.That(plugin, Does.Match(@"EnableLocalAuditExports\s*=\s*Config\.Bind\([^;]+,\s*true,"));
-            Assert.That(plugin, Does.Contain("Local audit starts on"));
+            Assert.That(plugin, Does.Match(@"EnableLocalAuditExports\s*=\s*Config\.Bind\([^;]+,\s*false,"));
+            Assert.That(plugin, Does.Contain("Local Audit is off unless you turn it on"));
             Assert.That(plugin, Does.Contain("\"auditlog\""));
             Assert.That(plugin, Does.Contain("/auditlog status, on, off, path, or snapshot"));
-            Assert.That(plugin, Does.Contain("Existing files remain local and are not deleted"));
+            Assert.That(plugin, Does.Contain("Your saved files stay on this computer"));
             Assert.That(menu, Does.Contain("DrawToggle(\"Local Audit Exports\""));
             Assert.That(menu, Does.Contain("SessionAuditController.ReconcileEnabledState"));
             Assert.That(menu, Does.Contain("DrawLocalAuditActions(showIdentityNote: false)"));
@@ -33,26 +33,33 @@ public sealed class SessionAuditContractTests
         string snapshotPolicy = Read("src", "Core", "AuditSnapshotPolicy.cs");
         Assert.Multiple(() =>
         {
-            Assert.That(controller, Does.Contain("Path.Combine(Paths.BepInExRootPath, \"BlueSageAudit\")"));
+            Assert.That(controller, Does.Contain("internal static string AuditRoot => ModSuitePaths.Current.Logs;"), "Round 5d: BlueSageQoLModSuite/logs.");
             Assert.That(controller, Does.Contain("Path.Combine(Paths.BepInExRootPath, \"LogOutput.log\")"));
             Assert.That(controller, Does.Contain("FileShare.ReadWrite | FileShare.Delete"));
-            Assert.That(controller, Does.Contain("MaxChatPartBytes = 16L * 1024L * 1024L"));
-            Assert.That(controller, Does.Contain("MaxBepInExPartBytes = 64L * 1024L * 1024L"));
-            Assert.That(controller, Does.Contain("MaxRetainedSessions = 12"));
-            Assert.That(controller, Does.Contain("RetentionDays = 14"));
+            Assert.That(controller, Does.Contain("MaxChatPartBytes = LocalFileBudgetPolicy.AuditChatPartBytes"));
+            Assert.That(controller, Does.Contain("MaxBepInExPartBytes = LocalFileBudgetPolicy.AuditMirrorPartBytes"));
+            Assert.That(controller, Does.Contain("ModSuitePaths.RunRetentionInBackground(_sessionDirectory)"), "Older sessions are zipped into the archive by the shared retention pass.");
             Assert.That(controller, Does.Contain("never uploaded automatically"));
             Assert.That(controller, Does.Contain("MarkCaptureFailed"));
-            Assert.That(controller, Does.Contain("configured on but NOT WRITING"));
-            Assert.That(controller, Does.Contain("events from the disabled period were not backfilled"));
+            // Voice pass (2026-10-23): one calm Local Audit voice; failures still answer, without shouting.
+            Assert.That(controller, Does.Contain("internal const string OffText = \"Local Audit is off (that's the default). Type /auditlog on if you'd like to keep local log copies.\";"));
+            Assert.That(controller, Does.Contain("internal const string WriteTroubleText = \"Local Audit is on but couldn't save files just now. Try /auditlog on again in a moment.\";"));
+            Assert.That(controller, Does.Contain("internal const string SnapshotFailedText = \"The snapshot couldn't be saved this time. Nothing was lost; try again in a moment.\";"));
+            Assert.That(controller, Does.Contain("internal const string ResumedText = \"Local Audit is back on. Anything from while it was off wasn't saved.\";"));
+            Assert.That(controller, Does.Contain("\"Local Audit is on. Your files are in \" + CurrentSessionDirectory + \". A snapshot saves the newest 8 MB of your game log as one file; the 2 newest are kept for each session.\""));
+            Assert.That(controller, Does.Contain("return \"Snapshot saved: \" + snapshotPath + \". Its file path is copied, ready to paste.\";"));
+            Assert.That(controller, Does.Not.Contain("FAILED"));
+            Assert.That(controller, Does.Not.Contain("NOT WRITING"));
             Assert.That(controller, Does.Not.Contain("HttpClient"));
             Assert.That(controller, Does.Not.Contain("WebClient"));
             Assert.That(controller, Does.Not.Contain("WebRequest"));
             Assert.That(controller, Does.Not.Contain("Upload"));
             Assert.That(controller, Does.Contain("AuditSnapshotPolicy.TryCreate"));
-            Assert.That(controller, Does.Contain("bytes from the true BepInEx LogOutput.log"));
-            Assert.That(snapshotPolicy, Does.Contain("LogOutput.log.tmp"));
+            Assert.That(controller, Does.Contain("bytes from the true BepInEx LogOutput.log"), "The byte count and source stay in the log.");
+            Assert.That(snapshotPolicy, Does.Contain("temporaryPath = finalPath + \".tmp\";"));
+            Assert.That(snapshotPolicy, Does.Contain("LocalFileBudgetPolicy.AuditSnapshotMaxBytes"));
             Assert.That(snapshotPolicy, Does.Contain("FileShare.ReadWrite | FileShare.Delete"));
-            Assert.That(snapshotPolicy, Does.Contain("MaxRetainedSnapshots = 8"));
+            Assert.That(snapshotPolicy, Does.Contain("MaxRetainedSnapshots = LocalFileBudgetPolicy.AuditSnapshotsPerSession"));
         });
     }
 

@@ -28,6 +28,8 @@ internal static class IdentityResyncController
     private static long _nextRequestPollMilliseconds;
     private static string _nonceScope = string.Empty;
     private static string _lastTransaction = "none";
+    private static long _nextAutoRefreshCheckMilliseconds;
+    private static long _lastAutoRefreshUtcTicks;
 
     internal static void Tick()
     {
@@ -38,6 +40,12 @@ internal static class IdentityResyncController
             _nextRuntimePollMilliseconds =
                 nowMilliseconds + RuntimePollIntervalMilliseconds;
             ObserveRuntimeShape(nowMilliseconds);
+        }
+        if (nowMilliseconds >= _nextAutoRefreshCheckMilliseconds)
+        {
+            _nextAutoRefreshCheckMilliseconds =
+                nowMilliseconds + RuntimePollIntervalMilliseconds;
+            RunAutomaticRefreshIfDue(nowMilliseconds);
         }
         if (nowMilliseconds >= _nextRequestPollMilliseconds)
         {
@@ -53,6 +61,8 @@ internal static class IdentityResyncController
         long nowMilliseconds =
             DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         ObserveRuntimeShape(nowMilliseconds);
+        // Player text stays plain; the full key=value detail goes to the log only.
+        Plugin.Log?.LogInfo("[BlueSageIdentityResync] command status: " + BuildStatus());
         LobbySafetyAccessState accessState =
             SteamIdModerationController.GetLocalAccessState(
                 out _,
@@ -65,15 +75,15 @@ internal static class IdentityResyncController
         {
             return BlueSageCommandResult.HandledWithMessages(
                 plan.Reason,
-                BuildStatus());
+                BuildPlainStatus());
         }
 
         switch (plan.Action)
         {
             case IdentityResyncAction.Status:
                 return BlueSageCommandResult.HandledWithMessages(
-                    BuildStatus(),
-                    "Use /idsync refresh for local BlueSage presentation, verified Host /idsync repair for one exact pass, or authenticated Helper /idsync request for Host relay.");
+                    BuildPlainStatus(),
+                    "/idsync refresh redraws the player list. The host can use /idsync repair to recheck player matches; an assigned Helper can use /idsync request to ask the host.");
             case IdentityResyncAction.RefreshLocalSurfaces:
                 return RefreshLocalSurfaces();
             case IdentityResyncAction.RepairIncompleteRows:
@@ -123,6 +133,41 @@ internal static class IdentityResyncController
         _lastTransaction = "none";
     }
 
+    // Round 4 Stage E #5 (Blue, 2026-10-19): while hosting, every 15 minutes rescan and relabel the BlueSage-owned
+    // row surfaces from already-available native state and report the result in the host journal. The same thing
+    // the "safe display refresh" button does; never an authoritative repair, never a moderation action.
+    private static void RunAutomaticRefreshIfDue(long nowMilliseconds)
+    {
+        long nowTicks = DateTime.UtcNow.Ticks;
+        bool isHost;
+        try
+        {
+            isHost = NetworkManager.main != null && NetworkManager.main.isHost;
+        }
+        catch (Exception)
+        {
+            isHost = false;
+        }
+
+        if (!IdentityAutoRefreshPolicy.ShouldRun(isHost, _lastAutoRefreshUtcTicks, nowTicks, out _lastAutoRefreshUtcTicks))
+        {
+            return;
+        }
+
+        try
+        {
+            // Round 5 Stage B (audit of Blue's 37.5 h host: all 150 journal action rows were this tick, pushing
+            // real kicks, mutes and bans out of the 100-row box after ~25 h). The journal records decisions and
+            // changes, not heartbeats: a maintenance tick writes no journal row. Its outcome stays visible in
+            // Host Tools through _lastTransaction ("local-refresh: rows=N"); the manual button keeps its row.
+            RefreshLocalSurfaces();
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log?.LogWarning("Automatic identity refresh skipped this round: " + ex.GetType().Name + ": " + ex.Message);
+        }
+    }
+
     private static BlueSageCommandResult RefreshLocalSurfaces()
     {
         IReadOnlyList<string> targetedSteamIds =
@@ -131,8 +176,8 @@ internal static class IdentityResyncController
         if (targetedSteamIds.Count == 0)
         {
             return BlueSageCommandResult.HandledWithMessages(
-                "Identity refresh made no change because no already-available native row state exists. It did not force a Steam/PurrNet snapshot.",
-                BuildStatus());
+                "The player list hasn't loaded yet, so there was nothing to refresh. No player action was taken.",
+                BuildPlainStatus());
         }
 
         Patches.PlayerIdentityRoleHighlightController
@@ -141,10 +186,9 @@ internal static class IdentityResyncController
         _lastTransaction =
             "local-refresh: rows=" + targetedSteamIds.Count;
         return BlueSageCommandResult.HandledWithMessages(
-            "Identity refresh rebuilt " +
-            targetedSteamIds.Count +
-            " BlueSage-owned local row surface(s) from already-available native state. No authoritative capture, name write, list clear, moderation action, or host request ran.",
-            BuildStatus());
+            IdentityResyncHelpPolicy.RefreshDonePrefix +
+            " No player action was taken.",
+            BuildPlainStatus());
     }
 
     private static BlueSageCommandResult ExecuteRepairFromCommand(
@@ -156,7 +200,7 @@ internal static class IdentityResyncController
                 out string scope))
         {
             return BlueSageCommandResult.HandledWithMessages(
-                "Identity repair stopped because this client is not the exact current Steam lobby owner and active PurrNet Host.");
+                "Only the lobby host can recheck player matches. Nothing changed.");
         }
 
         long generation = Coordinator.CurrentGeneration;
@@ -172,11 +216,11 @@ internal static class IdentityResyncController
         {
             return BlueSageCommandResult.HandledWithMessages(
                 result,
-                BuildStatus());
+                BuildPlainStatus());
         }
         return BlueSageCommandResult.HandledWithMessages(
             result,
-            BuildStatus());
+            BuildPlainStatus());
     }
 
     private static BlueSageCommandResult PublishHelperRequest(
@@ -191,7 +235,7 @@ internal static class IdentityResyncController
                 out string capability))
         {
             return BlueSageCommandResult.HandledWithMessages(
-                "Identity repair request was not published because current Helper authentication is not ready.");
+                "Your Helper access isn't ready yet, so the request wasn't sent. Try again in a few seconds.");
         }
 
         string lobbyIdentity = ((ulong)lobby).ToString();
@@ -206,7 +250,7 @@ internal static class IdentityResyncController
             generation <= 0L)
         {
             return BlueSageCommandResult.HandledWithMessages(
-                "Identity repair request was not published because the current lobby generation is not stable yet.");
+                "The lobby is still settling, so the request wasn't sent. Try again in a few seconds.");
         }
 
         string nonce = Guid.NewGuid()
@@ -222,7 +266,11 @@ internal static class IdentityResyncController
                 out string payload,
                 out string error))
         {
-            return BlueSageCommandResult.HandledWithMessages(error);
+            Plugin.Log?.LogWarning(
+                "[BlueSageIdentityResync] helper request not built: " +
+                SafeReason(error));
+            return BlueSageCommandResult.HandledWithMessages(
+                "The request couldn't be sent right now. Nothing changed.");
         }
 
         try
@@ -234,14 +282,16 @@ internal static class IdentityResyncController
             _lastTransaction =
                 "helper-request-published: generation=" + generation;
             return BlueSageCommandResult.HandledWithMessages(
-                "Identity repair request published through authenticated non-chat member data. The current Host will revalidate this Helper, lobby, owner, capability, generation, nonce, and exact row before one bounded repair.");
+                "Asked the host to recheck player matches. They'll double-check everything first. No player action was taken.");
         }
         catch (Exception ex)
         {
-            return BlueSageCommandResult.HandledWithMessages(
-                "Identity repair request failed safely (" +
+            Plugin.Log?.LogWarning(
+                "[BlueSageIdentityResync] helper request failed safely: " +
                 ex.GetType().Name +
-                "); no repair or identity mutation ran.");
+                "; no repair or identity mutation ran.");
+            return BlueSageCommandResult.HandledWithMessages(
+                "The request couldn't be sent right now. Nothing changed.");
         }
     }
 
@@ -333,7 +383,9 @@ internal static class IdentityResyncController
                 capabilityFingerprint,
                 request.Nonce,
                 out string result);
-            Plugin.AddLocalNotificationWithToast(result);
+            Plugin.AddLocalNotificationWithToast(
+                "A Helper asked for a player recheck. " +
+                result);
         }
     }
 
@@ -348,7 +400,7 @@ internal static class IdentityResyncController
         out string result)
     {
         result =
-            "Identity repair did not run.";
+            "The player recheck didn't run. Nothing changed.";
         if (!TryGetCurrentHostScope(
                 out CSteamID originalLobby,
                 out string originalOwner,
@@ -360,7 +412,7 @@ internal static class IdentityResyncController
             expectedGeneration != Coordinator.CurrentGeneration)
         {
             result =
-                "Identity repair stopped because the current Host, lobby, owner, or generation changed.";
+                "The lobby changed before the recheck could start, so it stopped. Nothing changed.";
             return false;
         }
 
@@ -379,7 +431,7 @@ internal static class IdentityResyncController
         {
             Coordinator.Abandon(lease);
             result =
-                "Identity repair request was already consumed. No capture or row refresh ran.";
+                "That request was already handled. Nothing changed.";
             return false;
         }
 
@@ -421,7 +473,7 @@ internal static class IdentityResyncController
                 expectedGeneration != Coordinator.CurrentGeneration)
             {
                 result =
-                    "Identity repair stopped after capture because current Host/lobby ownership or generation migrated. No row surface was refreshed.";
+                    "The lobby changed during the recheck, so it stopped. Nothing changed.";
                 return false;
             }
 
@@ -457,7 +509,7 @@ internal static class IdentityResyncController
                             out _))
                 {
                     result =
-                        "Identity repair request failed final exact Helper/lobby revalidation. No row surface was refreshed.";
+                        "The Helper's request couldn't be confirmed, so the recheck stopped. Nothing changed.";
                     return false;
                 }
             }
@@ -468,20 +520,12 @@ internal static class IdentityResyncController
                 ? "ready"
                 : "locked";
             result =
-                "Identity repair completed one bounded exact-correlation transaction: targetedRows=" +
-                targetedRows +
-                ", healedRows=" +
-                healedRows +
-                ", lockedRows=" +
-                after.LockedRows +
-                ", capturePerformed=" +
-                capturePerformed +
-                ". " +
+                IdentityResyncHelpPolicy.RecheckDonePrefix +
+                " " +
                 (after.Ready
-                    ? "Coverage is READY."
-                    : "Unresolved or conflicting rows remain fail-closed: " +
-                      after.Reason +
-                      ".");
+                    ? "Every visible player is matched safely."
+                    : "Some players are still settling, so actions on them stay paused.") +
+                " No player action was taken.";
             return true;
         }
         catch (Exception ex)
@@ -489,9 +533,7 @@ internal static class IdentityResyncController
             outcome = "failed-" +
                       ex.GetType().Name;
             result =
-                "Identity repair failed safely (" +
-                ex.GetType().Name +
-                "); exact-row locks remain in force.";
+                "The recheck hit a problem and stopped safely. Actions on unmatched players stay paused. No player action was taken.";
             return false;
         }
         finally
@@ -809,16 +851,30 @@ internal static class IdentityResyncController
             ".";
     }
 
+    private static string BuildPlainStatus()
+    {
+        IdentityResyncCoverage coverage =
+            PlayerIdentityEvidenceController
+                .GetCachedIdentityResyncCoverage();
+        return coverage.Ready
+            ? "Player matching: healthy."
+            : "Player matching: still settling.";
+    }
+
     private static string FormatBeginRefusal(
         IdentityResyncBeginDecision decision)
     {
+        Plugin.Log?.LogInfo(
+            "[BlueSageIdentityResync] repair not started: reason=" +
+            decision.Reason +
+            "; retryAfterMs=" +
+            decision.RetryAfterMilliseconds +
+            ".");
         if (decision.Reason ==
             IdentityResyncBeginReason.QuietWindow)
         {
             return
-                "Identity repair is waiting for the 500 ms generation quiet window (" +
-                decision.RetryAfterMilliseconds +
-                " ms remain). No repair ran.";
+                "The player list is still settling. Try again in a second. Nothing changed.";
         }
         if (decision.Reason ==
             IdentityResyncBeginReason.GlobalCooldown)
@@ -830,14 +886,13 @@ internal static class IdentityResyncController
                      999L) /
                     1000L);
             return
-                "Identity repair is globally throttled for " +
+                "Player matches were just rechecked. Try again in " +
                 seconds +
-                " more second(s). No repair ran.";
+                (seconds == 1L ? " second." : " seconds.") +
+                " Nothing changed.";
         }
         return
-            "Identity repair was refused before capture: " +
-            decision.Reason +
-            ".";
+            "The recheck couldn't start right now. Nothing changed.";
     }
 
     private static IdentityResyncAccess MapAccess(

@@ -12,10 +12,12 @@ public sealed class ReconnectSingleFlightContractTests
     [Test]
     public void ManagedReconnect_UsesCanonicalLobbyRejoinInsteadOfDirectStartClient()
     {
-        Assert.That(PluginSource, Does.Contain("using canonical saved-lobby cleanup/rejoin instead of calling StartClient directly"));
-        Assert.That(PluginSource, Does.Contain("before first canonical saved-lobby cleanup/rejoin attempt"));
+        // Round 5d: the unreachable managed retry loop and last-lobby fallback wait (5b review) are deleted; every
+        // reconnect generation goes through StartCleanMenuReconnect, the canonical saved-lobby cleanup/rejoin.
+        Assert.That(PluginSource, Does.Not.Contain("StartManagedReconnectLoop"));
+        Assert.That(PluginSource, Does.Not.Contain("LastLobbyRejoinFallbackWait"));
+        Assert.That(PluginSource, Does.Contain("StartCleanMenuReconnect("));
         Assert.That(PluginSource, Does.Not.Contain("before first StartClient call"));
-        Assert.That(PluginSource, Does.Contain("HandleReconnectFailureFallback(\"transport disconnected; canonical lobby rejoin required\")"));
     }
 
     [Test]

@@ -14,7 +14,11 @@ public sealed class PublicPackageDocumentationContractTests
     {
         string root = FindProjectRoot();
         string readme = File.ReadAllText(Path.Combine(root, "README.md"));
-        string opening = readme.Substring(0, Math.Min(2000, readme.Length));
+        // 2026-10-26: 2000 -> 2500. The BlueSage skeleton (badge row, callout, jump line: about 900 characters of
+        // navigation, no prose) sits above What's new, and the newest toast and outfit-slot headline joined the list;
+        // the Work / Relax opening phrases below must still land in the first screen or two. They end at about
+        // character 2434 today; do not widen this again without Blue's word.
+        string opening = readme.Substring(0, Math.Min(2500, readme.Length));
         string[] headings =
         {
             "## What's new",
@@ -37,7 +41,7 @@ public sealed class PublicPackageDocumentationContractTests
                 prior = current;
             }
 
-            Assert.That(opening, Does.Contain("Version 0.2.5 - October 18, 2026").IgnoreCase);
+            Assert.That(opening, Does.Contain("Version 0.2.7 - October 25, 2026").IgnoreCase);
             Assert.That(opening, Does.Contain("beside FPS / PING / RAM").IgnoreCase);
             Assert.That(opening, Does.Contain("game's statistics stay unchanged").IgnoreCase);
             Assert.That(opening, Does.Contain("BlueSage Report").And.Contain("Work and Relax"));
@@ -47,6 +51,62 @@ public sealed class PublicPackageDocumentationContractTests
             Assert.That(opening, Does.Contain("commands are optional shortcuts").IgnoreCase);
             Assert.That(opening, Does.Not.Contain("always available").IgnoreCase);
             Assert.That(opening, Does.Contain("WEBSITE").And.Contain("https://bluesagetech.net/ (Coming Soon)"));
+        });
+    }
+
+    // 2026-10-26 (Blue: "adopt our style and human writing updates for the next repack"): the README follows the
+    // BlueSage skeleton from docs/README_TEMPLATE_BLUESAGE.md. Pure markdown only (raw HTML is not confirmed to render on
+    // Thunderstore), at most six badges, the Website badge is static so it can never be a dead link while the site is
+    // "Coming Soon", one callout for a new player and one jump line before the version line.
+    [Test]
+    public void Public_readme_follows_the_BlueSage_skeleton()
+    {
+        string root = FindProjectRoot();
+        string readme = File.ReadAllText(Path.Combine(root, "README.md")).Replace("\r\n", "\n");
+        int whatsNew = readme.IndexOf("## What's new", StringComparison.Ordinal);
+        Assert.That(whatsNew, Is.GreaterThan(0));
+        string head = readme.Substring(0, whatsNew);
+        string[] lines = head.Split('\n');
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(lines[0], Is.EqualTo("# BlueSage QoL Tweaks"));
+            Assert.That(lines[2], Does.StartWith("**Little comfort tools for On-Together"), "one warm bold line comes first");
+
+            var badges = new System.Collections.Generic.List<string>();
+            foreach (string line in lines)
+            {
+                if (line.StartsWith("[![", StringComparison.Ordinal) || line.StartsWith("![", StringComparison.Ordinal)) badges.Add(line);
+            }
+            Assert.That(badges.Count, Is.InRange(4, 6), "badge row: four to six badges, no more");
+            foreach (string badge in badges)
+            {
+                Assert.That(badge, Does.Contain("https://img.shields.io/badge/"), "badges come from shields.io only");
+            }
+            string website = badges.Find(b => b.Contains("Website", StringComparison.Ordinal));
+            Assert.That(website, Is.Not.Null, "a Website badge is present");
+            Assert.That(website, Does.StartWith("![Website]"), "the Website badge is static (not a link) while the site is Coming Soon");
+            Assert.That(website, Does.Contain("Coming%20Soon"));
+            string discord = badges.Find(b => b.Contains("Discord", StringComparison.Ordinal));
+            Assert.That(discord, Does.Contain("https://discord.gg/JujMEwtN3q"));
+
+            Assert.That(head, Does.Contain("> **New here?**"), "one callout for a new player");
+            Assert.That(head, Does.Contain("[What's new](#whats-new) · [Quick Start](#quick-start)"), "one jump line");
+            Assert.That(head.IndexOf("**Version 0.2.7 - October 25, 2026.**", StringComparison.Ordinal), Is.GreaterThan(head.IndexOf("[What's new](#whats-new)", StringComparison.Ordinal)), "version line follows the jump line");
+            Assert.That(readme, Does.Not.Contain("<details"), "raw HTML is not confirmed to render on Thunderstore");
+            Assert.That(readme, Does.Not.Contain("<p align"), "raw HTML is not confirmed to render on Thunderstore");
+            Assert.That(readme, Does.Not.Contain("](https://bluesagetech.net"), "the website is never a live link while it is Coming Soon");
+
+            // Blue (2026-10-26): the README we took the layout idea from is never named on a public surface.
+            string changelog = File.ReadAllText(Path.Combine(root, "CHANGELOG.md"));
+            string manifest = File.ReadAllText(Path.Combine(root, "manifest.json"));
+            // The names are built from halves so this test file never carries the words itself.
+            foreach (string name in new[] { "hot" + "server", "hot" + "managers", "half-a-" + "constellation" })
+            {
+                Assert.That(readme.IndexOf(name, StringComparison.OrdinalIgnoreCase), Is.LessThan(0), $"README must not name {name}");
+                Assert.That(changelog.IndexOf(name, StringComparison.OrdinalIgnoreCase), Is.LessThan(0), $"CHANGELOG must not name {name}");
+                Assert.That(manifest.IndexOf(name, StringComparison.OrdinalIgnoreCase), Is.LessThan(0), $"manifest must not name {name}");
+            }
         });
     }
 
@@ -95,7 +155,8 @@ public sealed class PublicPackageDocumentationContractTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(readme, Does.Contain("**QoL-Menu**").And.Contain("**Styler-Menu**"));
+            Assert.That(readme, Does.Contain("**QoL Menu**").And.Contain("**Style Helper**"));
+            Assert.That(readme, Does.Not.Contain("**QoL-Menu**").And.Not.Contain("**Styler-Menu**"), "the README names the overlay buttons as they read in game");
             Assert.That(readme, Does.Contain("Host Tools").And.Contain("/motd"));
             Assert.That(readme, Does.Contain("2–15 seconds"));
             Assert.That(readme, Does.Contain("all around you"));
@@ -103,7 +164,7 @@ public sealed class PublicPackageDocumentationContractTests
     }
 
     [Test]
-    public void Thunderstore_description_names_the_0_2_5_headline_features_within_its_limit()
+    public void Thunderstore_description_names_the_0_2_6_headline_features_within_its_limit()
     {
         string manifest = File.ReadAllText(Path.Combine(FindProjectRoot(), "manifest.json"));
         string description = System.Text.Json.JsonDocument.Parse(manifest).RootElement.GetProperty("description").GetString() ?? string.Empty;
@@ -111,7 +172,9 @@ public sealed class PublicPackageDocumentationContractTests
         Assert.Multiple(() =>
         {
             Assert.That(description.Length, Is.LessThanOrEqualTo(250), "Thunderstore's own limit.");
-            Assert.That(description, Does.Contain("Fishing Aid").And.Contain("hotkeys").And.Contain("welcome messages"));
+            // 0.2.6 (round 4): the host tools and the autosave fix join the 0.2.5 headliners in one sentence.
+            Assert.That(description, Does.Contain("Fishing Aid").And.Contain("hotkeys").And.Contain("welcome message"));
+            Assert.That(description, Does.Contain("journal").And.Contain("kick").And.Contain("mute").And.Contain("autosave"));
             Assert.That(description, Does.Not.Contain("private").IgnoreCase, "The public package boundary refuses that word.");
         });
     }
@@ -222,7 +285,7 @@ public sealed class PublicPackageDocumentationContractTests
             Assert.That(readme, Does.Not.Contain("Neonicalle").And.Not.Contain("Bochi").And.Not.Contain("partner in crime"));
             Assert.That(readme, Does.Contain("Focus Pulse"));
             Assert.That(readme, Does.Contain("names, status, and Spoons tag").IgnoreCase);
-            Assert.That(readme, Does.Contain("[U]").And.Contain("Compatible QoL User"));
+            Assert.That(readme, Does.Contain("[U]").And.Contain("QoL v0.2.7 User").And.Contain("Pre-indicator QoL User"));
             Assert.That(readme, Does.Contain("never grants host or moderation powers"));
             Assert.That(readme, Does.Contain("first open after someone joins").IgnoreCase);
             Assert.That(readme, Does.Contain("QoL menu").And.Contain("/assetsweep").And.Contain("F8"));
@@ -260,7 +323,7 @@ public sealed class PublicPackageDocumentationContractTests
             Assert.That(changelog, Does.Not.Contain("individual support amounts").IgnoreCase);
             Assert.That(changelog, Does.Not.Contain("observation modes").IgnoreCase);
             Assert.That(changelog, Does.Contain("Focus Pulse"));
-            Assert.That(changelog.Replace("\r\n", "\n"), Does.StartWith("# Changelog\n\nEvery previous public release is kept below so the complete BlueSage history stays available on Thunderstore.\n\n## 0.2.5 — 2026-10-18"));
+            Assert.That(changelog.Replace("\r\n", "\n"), Does.StartWith("# Changelog\n\nEvery previous public release is kept below so the complete BlueSage history stays available on Thunderstore.\n\n## 0.2.7 — 2026-10-25"));
             Assert.That(changelog, Does.Contain("## 0.2.4 — 2026-07-30"));
             Assert.That(changelog, Does.Contain("## 0.2.3 — 2026-07-23"));
             Assert.That(changelog, Does.Contain("## 0.1.0 — 2026-07-03"));

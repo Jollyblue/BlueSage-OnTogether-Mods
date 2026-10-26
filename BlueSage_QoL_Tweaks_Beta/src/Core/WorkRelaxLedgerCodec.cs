@@ -33,9 +33,12 @@ internal static class WorkRelaxLedgerCodec
         return ledger;
     }
 
+    // Round 4 Stage G: one serializer for the process. Building one per save was part of the autosave-frame cost.
+    private static readonly DataContractJsonSerializer Serializer = new(typeof(WorkRelaxLedger));
+
     private static DataContractJsonSerializer CreateSerializer()
     {
-        return new DataContractJsonSerializer(typeof(WorkRelaxLedger));
+        return Serializer;
     }
 
     private static void Validate(WorkRelaxLedger ledger)

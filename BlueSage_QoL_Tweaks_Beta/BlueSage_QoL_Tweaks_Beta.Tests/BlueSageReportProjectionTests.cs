@@ -35,7 +35,7 @@ internal sealed class BlueSageReportProjectionTests
                 Assert.That(all.Value, Is.EqualTo(native.GetNumber(name)));
             }
 
-            if (report.Work.Get(name).Qualifier != "Overall native")
+            if (report.Work.Get(name).Qualifier != "whole game, not split")
             {
                 Assert.That(report.Work.Get(name).Value + report.Relax.Get(name).Value +
                             report.Unclassified.Get(name).Value, Is.LessThanOrEqualTo(all.Value + 0.001d));
@@ -50,7 +50,7 @@ internal sealed class BlueSageReportProjectionTests
             System.Array.Empty<WorkRelaxLedgerEvent>(), System.Array.Empty<WorkRelaxLedgerEvent>(),
             System.Array.Empty<BlueSageMoodObservation>(), System.Array.Empty<BlueSageAchievementObservation>());
 
-        Assert.That(report.Work.Get("CurrentStreak").Qualifier, Is.EqualTo("Overall native"));
+        Assert.That(report.Work.Get("CurrentStreak").Qualifier, Is.EqualTo("whole game, not split"));
         Assert.That(report.Work.Get("CurrentStreak").Value, Is.EqualTo(8));
         Assert.That(report.All.Get("TotalFocusDuration").UnitLabel, Is.EqualTo("seconds"));
         Assert.That(report.All.Get("ArtFocusDuration").UnitLabel, Is.EqualTo("minutes"));
@@ -74,8 +74,8 @@ internal sealed class BlueSageReportProjectionTests
 
         Assert.That(report.Work.Moods[0].Feel, Is.EqualTo(4));
         Assert.That(report.Work.Moods[0].UtcTicks, Is.EqualTo(638896000000000000L));
-        Assert.That(report.Work.Achievements[0].ObservationLabel, Is.EqualTo("Observed during Work"));
-        Assert.That(report.Relax.Achievements[0].ObservationLabel, Is.EqualTo("Observed during Relax"));
+        Assert.That(report.Work.Achievements[0].ObservationLabel, Is.EqualTo("During Work"));
+        Assert.That(report.Relax.Achievements[0].ObservationLabel, Is.EqualTo("During Relax"));
     }
 
     [Test]
@@ -246,9 +246,10 @@ internal sealed class BlueSageReportProjectionTests
         IReadOnlyList<BlueSageAllocationOption> options = BlueSageAllocationCatalog.Options;
         string[] keys = options.Select(item => item.MetricKey).ToArray();
         Assert.That(keys, Does.Contain("TotalFocusDuration"));
-        Assert.That(keys, Does.Contain("TodayFocusDuration"));
-        Assert.That(keys, Does.Contain("WeekFocusCount"));
-        Assert.That(keys, Does.Contain("MonthFocusDuration"));
+        // Round 5d: Today/Week/Month are worked out from the totals, so there is nothing of their own to move.
+        Assert.That(keys, Does.Not.Contain("TodayFocusDuration"));
+        Assert.That(keys, Does.Not.Contain("WeekFocusCount"));
+        Assert.That(keys, Does.Not.Contain("MonthFocusDuration"));
         Assert.That(keys, Does.Contain("ArtFocusCount"));
         Assert.That(keys, Does.Contain("PlayFocusDuration"));
         Assert.That(keys, Does.Contain("ToDoCompleted"));
@@ -256,7 +257,7 @@ internal sealed class BlueSageReportProjectionTests
         Assert.That(keys, Does.Contain("Mood:4"));
         Assert.That(options, Has.All.Matches<BlueSageAllocationOption>(item =>
             !string.IsNullOrWhiteSpace(item.Label) && item.Label != item.MetricKey));
-        Assert.That(WorkRelaxMetricCatalog.NativeMetrics.Where(item => item.IsAdditive)
+        Assert.That(WorkRelaxMetricCatalog.NativeMetrics.Where(item => item.IsAdditive && !item.IsDerived)
             .Select(item => item.Key).Except(keys), Is.Empty);
         Assert.That(WorkRelaxMetricCatalog.WeekdayBucketMetrics.Select(item => item.Key).Except(keys), Is.Empty);
     }

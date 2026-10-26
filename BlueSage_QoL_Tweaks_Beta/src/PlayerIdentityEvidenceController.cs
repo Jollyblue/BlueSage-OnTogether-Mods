@@ -89,7 +89,8 @@ internal static class PlayerIdentityEvidenceController
     private static long _snapshotCaptureCount;
     private static double _lastSnapshotCaptureMilliseconds;
     private static double _maxSnapshotCaptureMilliseconds;
-    private static string _lastCoverageTransitionKey = string.Empty;
+    private static StableStateLogState _coverageLogState;
+    private static string _lastCoverageJournalKey = string.Empty;
 
     private static int _lastSteamIdMismatchCount;
     private static ulong _lastSteamIdMismatchLobbyId;
@@ -617,10 +618,29 @@ internal static class PlayerIdentityEvidenceController
         return roster;
     }
 
-    internal static string GetDiagnosticRosterSummary()
+    // Round 4b (Blue, live UAT 2026-10-20): the Host Tools "Player matching" section reads this. It re-captures
+    // under the normal 2 s lifetime rule first, so the menu never shows the one-frame "cached snapshot is stale"
+    // state that the roster box below it was about to clear. Callers that want fail-closed cached semantics
+    // (host console, resync controller) keep GetCachedIdentityResyncCoverage.
+    internal static IdentityResyncCoverage GetIdentityResyncCoverage()
     {
+        if (!Plugin.CanUseLobbySafety(out _))
+        {
+            return GetCachedIdentityResyncCoverage();
+        }
+
         RosterSnapshot snapshot = CaptureRosterSnapshot(cacheAllowed: true);
-        return FormatDiagnosticRosterSummary(snapshot);
+        return new IdentityResyncCoverage(
+            snapshot.Verified.Length,
+            snapshot.ActiveNativeRowCount,
+            snapshot.NativeRowCount,
+            snapshot.PurrNetRowCount,
+            snapshot.LobbyMemberCount,
+            snapshot.LiveSteamCheckCount,
+            snapshot.LeftStaleCount,
+            snapshot.AmbiguousCount,
+            captureAvailable: true,
+            snapshot.Error);
     }
 
     internal static IdentityResyncCoverage GetCachedIdentityResyncCoverage()
@@ -1371,7 +1391,10 @@ internal static class PlayerIdentityEvidenceController
 
     private static void LogCoverageTransition(RosterSnapshot snapshot)
     {
-        string key = IdentityCoverageLogPolicy.BuildStateKey(
+        // Round 4 Stage D, log diet #6: the log key carries the safety state only (coverage complete, capture error,
+        // transport unavailable, any Steam-ID mismatch). The counts change on every join/leave wave and used to turn
+        // each refresh into a warning; they now key the journal status row instead, so they are still recorded.
+        string logKey = IdentityCoverageLogPolicy.BuildStateKey(
             snapshot.LobbyId,
             snapshot.CoverageComplete,
             snapshot.Error,
@@ -1383,14 +1406,35 @@ internal static class PlayerIdentityEvidenceController
             snapshot.LiveSteamCheckCount,
             snapshot.LeftStaleCount,
             snapshot.AmbiguousCount) +
+            "|" + (snapshot.SteamIdMismatchCount > 0) +
+            "|" + snapshot.TransportUnavailable;
+        string journalKey = logKey +
             "|" + snapshot.IdentityConfirmed.Length +
             "|" + snapshot.TransportVerifiedCount +
             "|" + snapshot.HostAttestedCount +
-            "|" + snapshot.SteamIdMismatchCount +
+            "|" + snapshot.LobbyMemberCount +
             "|" + snapshot.LobbyMemberLimit +
-            "|" + snapshot.TransportUnavailable;
-        if (string.Equals(_lastCoverageTransitionKey, key, StringComparison.Ordinal)) return;
-        _lastCoverageTransitionKey = key;
+            "|" + snapshot.ActiveNativeRowCount;
+        if (!string.Equals(_lastCoverageJournalKey, journalKey, StringComparison.Ordinal))
+        {
+            _lastCoverageJournalKey = journalKey;
+            // The WS3 transport line is a journal status row (hosts only; the controller gates and de-duplicates).
+            HostJournalController.RecordCoverage(snapshot.LobbyId != 0UL, snapshot.LobbyMemberCount, snapshot.LobbyMemberLimit, snapshot.ActiveNativeRowCount, snapshot.TransportVerifiedCount);
+        }
+
+        // Round 5 F: the safety state flipped 216 times in Blue's 37.5 h host because a public lobby has someone
+        // loading in or dropping out most of the time. A flip is logged only once it has held for a minute, and a
+        // persisting fail-closed state reminds once an hour (StableStateLogPolicy, shared with Clone Shield).
+        float coverageNow = Time.unscaledTime;
+        StableStateLogDecision coverageDecision = StableStateLogPolicy.Observe(
+            ref _coverageLogState,
+            logKey,
+            remindWhileHeld: !snapshot.CoverageComplete,
+            coverageNow);
+        if (coverageDecision == StableStateLogDecision.None) return;
+        string held = coverageDecision == StableStateLogDecision.Reminder
+            ? "; held=" + (int)(_coverageLogState.AnnouncedAgeSeconds(coverageNow) / 60f) + "min"
+            : string.Empty;
 
         string message = "[BlueSageIdentityCoverage] complete=" + snapshot.CoverageComplete +
                          "; verified=" + snapshot.Verified.Length +
@@ -1407,7 +1451,7 @@ internal static class PlayerIdentityEvidenceController
                          "; steamIdMismatch=" + snapshot.SteamIdMismatchCount +
                          "; lobbyLimit=" + snapshot.LobbyMemberLimit +
                          "; transport=" + (snapshot.TransportUnavailable ? "unavailable" : "ok") +
-                         "; identitySensitiveActions=" + (snapshot.CoverageComplete ? "ready" : "fail-closed") + ".";
+                         "; identitySensitiveActions=" + (snapshot.CoverageComplete ? "ready" : "fail-closed") + held + ".";
         if (snapshot.CoverageComplete) Plugin.Log?.LogInfo(message);
         else Plugin.Log?.LogWarning(message);
     }

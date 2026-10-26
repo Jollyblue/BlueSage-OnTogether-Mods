@@ -7,12 +7,21 @@ internal static class ConfigMigrationPolicy
     internal const string SweepTenMinuteSafetyV2Migration = "sweep-10-safety-v2";
     internal const string SweepAutomaticOptInV3Migration = "sweep-auto-opt-in-v3";
     internal const string CommunityBanAnyClientOptInV1Migration = "community-ban-any-client-opt-in-v1";
+    // Round 4 Stage G (2026-10-20): the 10/15-minute sweep values written by the two migrations above move to 40 once.
+    internal const string SweepFortyMinuteOverlapV4Migration = "sweep-40-overlap-v4";
+    // Round 5 F (2026-10-22): the automatic-sweep toast goes quiet once for every existing install.
+    internal const string SweepNotifyQuietV5Migration = "sweep-notify-quiet-v5";
+    // Round 5d (2026-10-23): the optional local audit goes off once for every existing install (LocalFileBudgetPolicy).
+    internal const string LocalAuditOffV6Migration = "local-audit-off-v6";
     internal const string CurrentMigrationLedger =
         FinalDefaultsV2Migration + ";" +
         SweepFifteenMinuteV1Migration + ";" +
         SweepTenMinuteSafetyV2Migration + ";" +
         SweepAutomaticOptInV3Migration + ";" +
-        CommunityBanAnyClientOptInV1Migration;
+        CommunityBanAnyClientOptInV1Migration + ";" +
+        SweepFortyMinuteOverlapV4Migration + ";" +
+        SweepNotifyQuietV5Migration + ";" +
+        LocalAuditOffV6Migration;
 
     private const string LegacyVersionDerivedV2Marker = "0.2.0-final-defaults-v2";
 

@@ -35,6 +35,10 @@ internal sealed class BlueSageReportWindow : MonoBehaviour
     private bool _detailsExpanded;
     private BlueSageReportFilter _filter;
     private BlueSageReportProjection? _projection;
+    // Round 5 R: achievement sprites read once per refresh (never per frame); icon cells scale with the menu scale.
+    private Dictionary<string, Sprite> _achievementSprites = new(StringComparer.Ordinal);
+    private const float IconCellSize = ReportIconPolicy.IconCellSize;
+    private const float LockedIconAlpha = ReportIconPolicy.LockedIconAlpha;
     private readonly BlueSageReportStatusPresenter _status = new();
     private int _allocationMetricIndex;
     private string _allocationAmount = "1";
@@ -145,10 +149,21 @@ internal sealed class BlueSageReportWindow : MonoBehaviour
     {
         GUILayout.BeginHorizontal();
         DrawFilter(BlueSageReportFilter.All, "ALL");
+        // Round 5 R: the game's own pomodoro and break sprites as the legend for Work and Relax.
+        bool iconsReady = BlueSagePomodoroIconResolver.TryResolve(out Sprite? pomodoroSprite, out Sprite? breakSprite);
+        DrawFilterIcon(iconsReady ? pomodoroSprite : null);
         DrawFilter(BlueSageReportFilter.Work, "WORK");
+        DrawFilterIcon(iconsReady ? breakSprite : null);
         DrawFilter(BlueSageReportFilter.Relax, "RELAX");
         DrawFilter(BlueSageReportFilter.Unclassified, "UNCLASSIFIED");
         GUILayout.EndHorizontal();
+    }
+
+    // The cell is reserved whether or not the sprite is ready, so the filter row never shifts between passes.
+    private static void DrawFilterIcon(Sprite? sprite)
+    {
+        Rect iconRect = GUILayoutUtility.GetRect(IconCellSize, IconCellSize, GUILayout.Width(IconCellSize), GUILayout.Height(IconCellSize));
+        if (sprite != null) TryDrawSprite(sprite, iconRect);
     }
 
     private void DrawReportContent()
@@ -189,14 +204,24 @@ internal sealed class BlueSageReportWindow : MonoBehaviour
         GUILayout.Space(8f);
         GUILayout.BeginVertical(_sectionStyle);
         GUILayout.Label(title, _labelStyle);
+        bool pomodoroIconsReady = BlueSagePomodoroIconResolver.TryResolve(out Sprite? pomodoroSprite, out _);
         foreach (string key in keys)
         {
             BlueSageReportMetric metric = view.Get(key);
             string value = metric.WeekdayValues.Count > 0
                 ? string.Join("  ", metric.WeekdayValues.Select(number => number.ToString("0.##", CultureInfo.InvariantCulture)))
                 : metric.Value.ToString("0.##", CultureInfo.InvariantCulture);
+            // Round 5 R: the game's pomodoro icon in front of every pomodoro metric (duration and session families).
+            bool pomodoroMetric = ReportIconPolicy.IsPomodoroMetric(WorkRelaxMetricCatalog.Get(key).Family);
+            GUILayout.BeginHorizontal();
+            if (pomodoroMetric)
+            {
+                Rect iconRect = GUILayoutUtility.GetRect(IconCellSize, IconCellSize, GUILayout.Width(IconCellSize), GUILayout.Height(IconCellSize));
+                if (pomodoroIconsReady && pomodoroSprite != null) TryDrawSprite(pomodoroSprite, iconRect);
+            }
             GUILayout.Label(BlueSageMetricPresentation.FriendlyLabel(key) + ": " + value + " " + metric.UnitLabel +
                             (string.IsNullOrEmpty(metric.Qualifier) ? string.Empty : "  -  " + metric.Qualifier), _smallStyle);
+            GUILayout.EndHorizontal();
         }
         GUILayout.EndVertical();
     }
@@ -231,7 +256,11 @@ internal sealed class BlueSageReportWindow : MonoBehaviour
             if (nativeFacesReady && feel < faces.Count && faces[feel] != null)
             {
                 Rect faceRect = GUILayoutUtility.GetRect(48f, 48f, GUILayout.Width(48f), GUILayout.Height(48f));
-                DrawSprite(faces[feel], faceRect);
+                // A contrasting backdrop cell (the window's header color), so a pale sprite on the light section
+                // panel can never hide; the game draws these untinted, so no tint is applied here either.
+                Texture2D? backdrop = _headerBoxStyle?.normal?.background;
+                if (backdrop != null) GUI.DrawTexture(faceRect, backdrop);
+                TryDrawSprite(faces[feel], faceRect);
             }
             int count = view.MoodStats.OverviewCounts.TryGetValue(feel, out int value) ? value : 0;
             GUILayout.Label(BlueSageJournalMoodPresentation.Label(feel) + ": " + count, _smallStyle);
@@ -239,17 +268,78 @@ internal sealed class BlueSageReportWindow : MonoBehaviour
         }
         GUILayout.EndHorizontal();
         if (!nativeFacesReady)
-            GUILayout.Label("Native Journal face textures unavailable; plain-English labels remain active.", _smallStyle);
+            GUILayout.Label("The game's Journal faces aren't available right now, so the names are shown instead.", _smallStyle);
     }
 
-    private static void DrawSprite(Sprite sprite, Rect target)
+    // Round 5 R0, widened after Blue's answer (2026-10-22: "just missing faces", no fallback sentence): on 0.2.6 the
+    // resolver had the sprites and the draw itself was silent. The draw now uses the sprite's own uv bounds (valid
+    // for rectangle and tight atlas packing alike; Sprite.textureRect throws on tight packing and is only the
+    // fallback), reports success, and writes one diagnostic line per session with the texture, uv and GUI alpha
+    // it drew with, so a face that still does not show up is explained by the log, not guessed at.
+    private static string? _spriteDrawDiagnostic;
+    private static readonly HashSet<string> SpriteDrawFailuresLogged = new(StringComparer.Ordinal);
+
+    private static bool TryDrawSprite(Sprite sprite, Rect target)
     {
-        Texture2D texture = sprite.texture;
-        if (texture == null) return;
-        Rect source = sprite.textureRect;
-        var uv = new Rect(source.x / texture.width, source.y / texture.height,
-            source.width / texture.width, source.height / texture.height);
-        GUI.DrawTextureWithTexCoords(target, texture, uv, true);
+        try
+        {
+            if (sprite == null) return false;
+            Texture2D texture = sprite.texture;
+            if (texture == null || texture.width <= 0 || texture.height <= 0)
+            {
+                LogSpriteDrawFailureOnce("texture missing for sprite '" + sprite.name + "'");
+                return false;
+            }
+
+            Rect uv;
+            Vector2[] uvs = sprite.uv;
+            if (uvs != null && uvs.Length > 0)
+            {
+                float minX = uvs[0].x, maxX = uvs[0].x, minY = uvs[0].y, maxY = uvs[0].y;
+                for (int index = 1; index < uvs.Length; index++)
+                {
+                    Vector2 point = uvs[index];
+                    if (point.x < minX) minX = point.x;
+                    if (point.x > maxX) maxX = point.x;
+                    if (point.y < minY) minY = point.y;
+                    if (point.y > maxY) maxY = point.y;
+                }
+                uv = new Rect(minX, minY, maxX - minX, maxY - minY);
+            }
+            else
+            {
+                Rect source = sprite.textureRect;
+                uv = new Rect(source.x / texture.width, source.y / texture.height,
+                    source.width / texture.width, source.height / texture.height);
+            }
+
+            GUI.DrawTextureWithTexCoords(target, texture, uv, true);
+            if (_spriteDrawDiagnostic == null && Event.current != null && Event.current.type == EventType.Repaint)
+            {
+                Color guiColor = GUI.color;
+                _spriteDrawDiagnostic = "drew sprite '" + sprite.name + "' from texture '" + texture.name + "' " +
+                                        texture.width + "x" + texture.height + " format=" + texture.format +
+                                        " packed=" + sprite.packed + " uv=" + uv +
+                                        " guiColor=(" + guiColor.r.ToString("0.00", CultureInfo.InvariantCulture) + "," +
+                                        guiColor.g.ToString("0.00", CultureInfo.InvariantCulture) + "," +
+                                        guiColor.b.ToString("0.00", CultureInfo.InvariantCulture) + "," +
+                                        guiColor.a.ToString("0.00", CultureInfo.InvariantCulture) + ")" +
+                                        " cell=" + target;
+                Plugin.Log?.LogInfo("BlueSage Report sprite draw: " + _spriteDrawDiagnostic + ".");
+            }
+            return true;
+        }
+        catch (Exception exception)
+        {
+            LogSpriteDrawFailureOnce("draw failed with " + exception.GetType().Name + " for sprite '" + (sprite != null ? sprite.name : "null") + "'");
+            return false;
+        }
+    }
+
+    private static void LogSpriteDrawFailureOnce(string reason)
+    {
+        if (!SpriteDrawFailuresLogged.Add(reason)) return;
+        Plugin.Log?.LogInfo("BlueSage Report sprite draw: " + reason + ".");
     }
 
     private void DrawAchievements(BlueSageReportView view)
@@ -258,12 +348,24 @@ internal sealed class BlueSageReportWindow : MonoBehaviour
         GUILayout.BeginVertical(_sectionStyle);
         GUILayout.Label("Achievements", _labelStyle);
         if (view.AchievementProgress.IsOverallNative)
-            GUILayout.Label(view.AchievementProgress.Unlocked + " / " + view.AchievementProgress.Total + " unlocked - current native truth", _smallStyle);
+            GUILayout.Label(view.AchievementProgress.Unlocked + " / " + view.AchievementProgress.Total + " unlocked in the game", _smallStyle);
         else
-            GUILayout.Label(view.Achievements.Count + " unlock observations in this mode. Timing is observational, not proof of cause.", _smallStyle);
+            GUILayout.Label(view.Achievements.Count + " unlocked while this label was on. That's when they happened, not why.", _smallStyle);
         foreach (BlueSageAchievementObservation achievement in view.Achievements)
         {
+            // Round 5 R (Blue: "game icons where able"): the achievement's own sprite, read once per refresh, drawn
+            // in layout units so it scales with the menu scale like everything else; locked ones are dimmed.
+            GUILayout.BeginHorizontal();
+            Rect iconRect = GUILayoutUtility.GetRect(IconCellSize, IconCellSize, GUILayout.Width(IconCellSize), GUILayout.Height(IconCellSize));
+            if (_achievementSprites.TryGetValue(achievement.Key, out Sprite? sprite) && sprite != null)
+            {
+                Color previous = GUI.color;
+                if (!achievement.Unlocked) GUI.color = new Color(previous.r, previous.g, previous.b, previous.a * LockedIconAlpha);
+                TryDrawSprite(sprite, iconRect);
+                GUI.color = previous;
+            }
             GUILayout.Label(achievement.Key + " - " + achievement.ObservationLabel, _smallStyle);
+            GUILayout.EndHorizontal();
         }
         GUILayout.EndVertical();
     }
@@ -273,7 +375,7 @@ internal sealed class BlueSageReportWindow : MonoBehaviour
         GUILayout.Space(8f);
         GUILayout.BeginVertical(_sectionStyle);
         GUILayout.Label("Classification History", _labelStyle);
-        GUILayout.Label("Recent sessions first. Corrections change only the BlueSage classification.", _smallStyle);
+        GUILayout.Label("Newest first. Changing a label here only changes BlueSage's Work / Relax label, never your game stats.", _smallStyle);
         _detailsExpanded = GUILayout.Toggle(_detailsExpanded, "Show technical details", _buttonStyle);
         foreach (BlueSageReportHistoryItem item in _projection!.History.Take(30))
         {
@@ -299,7 +401,7 @@ internal sealed class BlueSageReportWindow : MonoBehaviour
         bool stackedAllocationLayout = ReportWindowLayoutPolicy.UseStackedAllocationLayout(contentWidth);
         if (stackedAllocationLayout)
         {
-            GUILayout.Label("Allocate Unclassified", _smallStyle);
+            GUILayout.Label("Move Unclassified", _smallStyle);
             _allocationMetricIndex = GUILayout.SelectionGrid(
                 _allocationMetricIndex,
                 allocationLabels,
@@ -311,7 +413,7 @@ internal sealed class BlueSageReportWindow : MonoBehaviour
         else
         {
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Allocate Unclassified", _smallStyle, GUILayout.Width(140f));
+            GUILayout.Label("Move Unclassified", _smallStyle, GUILayout.Width(140f));
             _allocationMetricIndex = GUILayout.SelectionGrid(
                 _allocationMetricIndex,
                 allocationLabels,
@@ -324,8 +426,8 @@ internal sealed class BlueSageReportWindow : MonoBehaviour
         if (GUILayout.Button("to Relax", _buttonStyle, GUILayout.Width(85f))) Allocate(WorkRelaxAttributionMode.Relax);
         if (GUILayout.Button("Undo latest", _buttonStyle, GUILayout.Width(100f)))
         {
-            _status.ShowActionResult(WorkRelaxRuntimeController.TryUndoLatestReportCorrection(out string reason)
-                ? "Latest correction undone."
+            ShowResult(WorkRelaxRuntimeController.TryUndoLatestReportCorrection(out string reason)
+                ? "Last change undone."
                 : reason);
             RequestRefresh();
         }
@@ -333,10 +435,17 @@ internal sealed class BlueSageReportWindow : MonoBehaviour
         GUILayout.EndVertical();
     }
 
+    // Round 5h: the Report's footer line is also shown as a toast, so a correction never goes unnoticed.
+    private void ShowResult(string result)
+    {
+        _status.ShowActionResult(result);
+        Plugin.Instance?.ShowToast(ToastPolicy.Summarize(result));
+    }
+
     private void Reclassify(BlueSageReportHistoryItem item, WorkRelaxAttributionMode to)
     {
-        _status.ShowActionResult(WorkRelaxRuntimeController.TryApplyReportCorrections(item.Members, to, out string reason)
-            ? "Classification updated." : reason);
+        ShowResult(WorkRelaxRuntimeController.TryApplyReportCorrections(item.Members, to, out string reason)
+            ? "Label updated." : reason);
         RequestRefresh();
     }
 
@@ -344,13 +453,13 @@ internal sealed class BlueSageReportWindow : MonoBehaviour
     {
         if (!double.TryParse(_allocationAmount, NumberStyles.Float, CultureInfo.InvariantCulture, out double amount))
         {
-            _status.ShowActionResult("Enter a valid amount.");
+            ShowResult("Type a number first.");
             return;
         }
-        _status.ShowActionResult(WorkRelaxRuntimeController.TryApplyReportCorrection(
+        ShowResult(WorkRelaxRuntimeController.TryApplyReportCorrection(
             BlueSageAllocationCatalog.Options[_allocationMetricIndex].MetricKey,
             WorkRelaxAttributionMode.Unclassified, to, amount, "aggregate-unclassified", out string reason)
-            ? "Unclassified value allocated."
+            ? "Moved."
             : reason);
         RequestRefresh();
     }
@@ -390,6 +499,8 @@ internal sealed class BlueSageReportWindow : MonoBehaviour
             }
         }
         achievementMilliseconds = phase.ElapsedMilliseconds;
+        // Round 5 R: sprites were read inside the batches above; swap the cache once per refresh.
+        _achievementSprites = achievementRead.Sprites;
 
         phase.Restart();
         bool refreshed = WorkRelaxRuntimeController.TryRefreshReport(moods, moodsAvailable,
@@ -411,7 +522,7 @@ internal sealed class BlueSageReportWindow : MonoBehaviour
     {
         GUILayout.BeginVertical(_footerStyle, GUILayout.MinHeight(FooterHeight));
         GUILayout.Label(_status.Text, _footerTextStyle);
-        GUILayout.Label("Vanilla saved data stays unchanged. Use the filters to view the same totals by intent.", _footerTextStyle);
+        GUILayout.Label("Your game's saved stats never change. The filters show the same totals split by Work and Relax.", _footerTextStyle);
         GUILayout.EndVertical();
     }
 
@@ -541,7 +652,7 @@ internal static class BlueSageReportNativeReader
             Type? dataManagerType = game?.GetType("DataManager", false);
             if (dataManagerType == null)
             {
-                warning = "Native mood observations are unavailable on this game build.";
+                warning = "This game version doesn't share Journal check-ins.";
             }
             else
             {
@@ -562,10 +673,10 @@ internal static class BlueSageReportNativeReader
                     moods = moodList.ToArray();
                     moodsAvailable = true;
                 }
-                else warning = "Native mood history is temporarily unavailable.";
+                else warning = "Journal check-ins can't be read right now; try Refresh in a moment.";
             }
         }
-        catch (Exception exception) { warning = "Native mood refresh stayed safe: " + exception.GetType().Name; }
+        catch (Exception exception) { warning = "Journal check-ins couldn't be read this time; nothing was changed (" + exception.GetType().Name + ")."; }
     }
 
     internal static BlueSageAchievementReadSession BeginAchievementRead() => new(Flags);
@@ -595,6 +706,11 @@ internal sealed class BlueSageAchievementReadSession
     private readonly UnityEngine.Object? _manager;
     private readonly MethodInfo? _getAchievement;
     private readonly List<NativeAchievementObservation> _observations = new();
+    // Round 5 R: the game's own achievement sprites, read inside the same 12-per-frame batches (never per frame).
+    // AchievementManager.AchievementContainer (public property) -> AchievementInfos (public list) -> AchievementSprite.
+    private readonly Dictionary<string, Sprite> _sprites = new(StringComparer.Ordinal);
+    private readonly IList? _achievementInfos;
+    private readonly FieldInfo? _achievementSpriteField;
     private int _next;
 
     internal BlueSageAchievementReadSession(BindingFlags flags)
@@ -607,7 +723,7 @@ internal sealed class BlueSageAchievementReadSession
             Type? achievementType = game?.GetType("Achievement", false);
             if (managerType == null || achievementType == null || !achievementType.IsEnum)
             {
-                Warning = "Native achievement observations are unavailable on this game build.";
+                Warning = "This game version doesn't share achievements.";
                 Complete = true;
                 return;
             }
@@ -616,7 +732,7 @@ internal sealed class BlueSageAchievementReadSession
             _getAchievement = managerType.GetMethod("GetAchievement", flags, null, new[] { achievementType }, null);
             if (_manager == null || _getAchievement == null)
             {
-                Warning = "Native achievement history is temporarily unavailable.";
+                Warning = "Achievements can't be read right now; try Refresh in a moment.";
                 Complete = true;
                 return;
             }
@@ -624,10 +740,26 @@ internal sealed class BlueSageAchievementReadSession
             _values = Enum.GetValues(achievementType).Cast<object>().ToArray();
             Complete = _values.Length == 0;
             Available = true;
+
+            // Sprites are optional: a build without the container just draws text, as before.
+            try
+            {
+                PropertyInfo? containerProperty = managerType.GetProperty("AchievementContainer", BindingFlags.Public | BindingFlags.Instance);
+                object? container = containerProperty?.GetValue(_manager);
+                FieldInfo? infosField = container?.GetType().GetField("AchievementInfos", BindingFlags.Public | BindingFlags.Instance);
+                _achievementInfos = infosField?.GetValue(container) as IList;
+                Type? infoType = game?.GetType("AchievementInfo", false);
+                _achievementSpriteField = infoType?.GetField("AchievementSprite", BindingFlags.Public | BindingFlags.Instance);
+            }
+            catch (Exception)
+            {
+                _achievementInfos = null;
+                _achievementSpriteField = null;
+            }
         }
         catch (Exception exception)
         {
-            Warning = "Native achievement refresh stayed safe: " + exception.GetType().Name;
+            Warning = "Achievements couldn't be read this time; nothing was changed (" + exception.GetType().Name + ").";
             Complete = true;
         }
     }
@@ -636,6 +768,27 @@ internal sealed class BlueSageAchievementReadSession
     internal bool Available { get; private set; }
     internal string Warning { get; private set; } = string.Empty;
     internal NativeAchievementObservation[] Observations => _observations.ToArray();
+    internal Dictionary<string, Sprite> Sprites => new(_sprites, StringComparer.Ordinal);
+
+    private void TryReadSprite(object value, string key)
+    {
+        if (_achievementInfos == null || _achievementSpriteField == null) return;
+        try
+        {
+            int index = Convert.ToInt32(value, CultureInfo.InvariantCulture);
+            if (index < 0 || index >= _achievementInfos.Count) return;
+            object? info = _achievementInfos[index];
+            if (info == null) return;
+            if (_achievementSpriteField.GetValue(info) is Sprite sprite && sprite != null)
+            {
+                _sprites[key] = sprite;
+            }
+        }
+        catch (Exception)
+        {
+            // One missing sprite never costs the row its text.
+        }
+    }
 
     internal void ReadNextAchievementBatch(int maximum)
     {
@@ -648,13 +801,15 @@ internal sealed class BlueSageAchievementReadSession
                 object value = _values[_next];
                 bool unlocked = _getAchievement!.Invoke(_getAchievement.IsStatic ? null : _manager,
                     new[] { value }) is bool state && state;
-                _observations.Add(new NativeAchievementObservation(value.ToString() ?? string.Empty, unlocked));
+                string key = value.ToString() ?? string.Empty;
+                _observations.Add(new NativeAchievementObservation(key, unlocked));
+                TryReadSprite(value, key);
             }
             Complete = _next >= _values.Length;
         }
         catch (Exception exception)
         {
-            Warning = "Native achievement refresh stayed safe: " + exception.GetType().Name;
+            Warning = "Achievements couldn't be read this time; nothing was changed (" + exception.GetType().Name + ").";
             Available = false;
             Complete = true;
             _observations.Clear();
@@ -662,11 +817,19 @@ internal sealed class BlueSageAchievementReadSession
     }
 }
 
+// Round 5 R0 (Blue, 2026-10-22: "No faces on the bluesage report screen on todays build"). Before this round the
+// resolver was primed only by the native Statistics tab's open hook; the Report opened from the QoL menu never
+// primed it, so the faces were missing for the whole 0.2.6 line while every test passed. Now it also primes
+// itself from the game's own cached singleton getter (MonoSingleton<T>.I: cached, one FindAnyObjectByType when
+// unset, never an instantiate), probes at most once per cooldown while unresolved, and logs the one reason once.
 internal static class BlueSageJournalMoodTextureResolver
 {
     private const BindingFlags Flags = BindingFlags.NonPublic | BindingFlags.Instance;
+    private const float SingletonProbeCooldownSeconds = 5f;
     private static Component? _statisticManager;
     private static IReadOnlyList<Sprite>? _cached;
+    private static string? _loggedReason;
+    private static float _nextSingletonProbeAt;
 
     internal static void ObserveStatisticManager(Component? statisticManager)
     {
@@ -677,27 +840,123 @@ internal static class BlueSageJournalMoodTextureResolver
 
     internal static bool TryResolve(out IReadOnlyList<Sprite> faces)
     {
-        if (_cached != null && _cached.Count == 5 && _cached.All(item => item != null))
+        if (_cached != null &&
+            _cached.Count == JournalMoodFaceResolutionPolicy.RequiredFaceCount &&
+            _cached.All(item => item != null))
         {
             faces = _cached;
             return true;
         }
 
         faces = Array.Empty<Sprite>();
-        if (_statisticManager == null) return false;
+        Component? manager = _statisticManager;
+        if (manager == null)
+        {
+            manager = TryProbeSceneSingleton();
+            if (manager != null) _statisticManager = manager;
+        }
+
+        bool fieldFound = false;
+        int spriteCount = 0;
+        int destroyedCount = 0;
         try
         {
-            FieldInfo? field = _statisticManager.GetType().GetField("_moodIcons", Flags);
-            if (field?.GetValue(_statisticManager) is not IEnumerable values) return false;
-            List<Sprite> resolved = values.Cast<object?>().OfType<Sprite>().Take(5).ToList();
-            if (resolved.Count != 5 || resolved.Any(item => item == null)) return false;
-            _cached = resolved.AsReadOnly();
-            faces = _cached;
-            return true;
+            if (manager != null)
+            {
+                FieldInfo? field = manager.GetType().GetField("_moodIcons", Flags);
+                fieldFound = field != null;
+                if (field?.GetValue(manager) is IEnumerable values)
+                {
+                    List<Sprite> resolved = values.Cast<object?>().OfType<Sprite>().ToList();
+                    spriteCount = resolved.Count;
+                    List<Sprite> first = resolved.Take(JournalMoodFaceResolutionPolicy.RequiredFaceCount).ToList();
+                    destroyedCount = first.Count(item => item == null);
+                    if (first.Count == JournalMoodFaceResolutionPolicy.RequiredFaceCount && destroyedCount == 0)
+                    {
+                        _cached = first.AsReadOnly();
+                        _loggedReason = null;
+                        faces = _cached;
+                        return true;
+                    }
+                }
+            }
         }
-        catch
+        catch (Exception exception)
         {
+            LogReasonOnce("reading the game's _moodIcons failed: " + exception.GetType().Name);
             return false;
         }
+
+        LogReasonOnce(JournalMoodFaceResolutionPolicy.Describe(manager != null, fieldFound, spriteCount, destroyedCount));
+        return false;
+    }
+
+    // The game's getter is cached once found; while it is unset it searches the scene, so this never runs more
+    // than once per cooldown (the Report draws every frame while open).
+    private static Component? TryProbeSceneSingleton()
+    {
+        float now = Time.unscaledTime;
+        if (now < _nextSingletonProbeAt) return null;
+        _nextSingletonProbeAt = now + SingletonProbeCooldownSeconds;
+        try
+        {
+            StatisticManager? singleton = MonoSingleton<StatisticManager>.I;
+            return singleton != null ? singleton : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static void LogReasonOnce(string reason)
+    {
+        if (string.IsNullOrEmpty(reason) || string.Equals(reason, _loggedReason, StringComparison.Ordinal)) return;
+        _loggedReason = reason;
+        Plugin.Log?.LogDebug("BlueSage Report Journal faces fell back to plain labels because " + reason + ".");
+    }
+}
+
+// Round 5 R (Blue, 2026-10-22: "pomodoro/break icons also in"). The game's own pomodoro and break sprites from
+// PomodoroController (a MonoSingleton on build 25966942: PomoSprite is public, _breakBgSprite is the serialized
+// field the timer swaps onto its fill image at a break). Resolved once from the cached singleton getter, probed
+// at most once per 5 s while unresolved, never scanned. Missing sprites mean no icon, never a missing row.
+internal static class BlueSagePomodoroIconResolver
+{
+    private const float ProbeCooldownSeconds = 5f;
+    private static Sprite? _pomodoro;
+    private static Sprite? _break;
+    private static float _nextProbeAt;
+
+    internal static bool TryResolve(out Sprite? pomodoro, out Sprite? breakSprite)
+    {
+        if (_pomodoro != null && _break != null)
+        {
+            pomodoro = _pomodoro;
+            breakSprite = _break;
+            return true;
+        }
+
+        pomodoro = _pomodoro;
+        breakSprite = _break;
+        float now = Time.unscaledTime;
+        if (now < _nextProbeAt) return pomodoro != null;
+        _nextProbeAt = now + ProbeCooldownSeconds;
+        try
+        {
+            PomodoroController? controller = MonoSingleton<PomodoroController>.I;
+            if (controller == null) return pomodoro != null;
+            if (controller.PomoSprite != null) _pomodoro = controller.PomoSprite;
+            FieldInfo? breakField = typeof(PomodoroController).GetField("_breakBgSprite", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (breakField?.GetValue(controller) is Sprite resolvedBreak && resolvedBreak != null) _break = resolvedBreak;
+        }
+        catch (Exception)
+        {
+            // Fall back to text; the next probe may succeed once the controller exists.
+        }
+
+        pomodoro = _pomodoro;
+        breakSprite = _break;
+        return pomodoro != null;
     }
 }

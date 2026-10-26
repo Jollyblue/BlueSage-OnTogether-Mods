@@ -65,8 +65,8 @@ internal static class WorkRelaxOverlayLayoutPolicy
     private const float MinimumInlineMetricsWidth = 240f;
 
     // Round 3b (Blue, 2026-10-18): click-to-open buttons for players who prefer them over a hotkey.
-    internal const string QolMenuLabel = "QoL-Menu";
-    internal const string StyleMenuLabel = "Styler-Menu";
+    internal const string QolMenuLabel = "QoL Menu";
+    internal const string StyleMenuLabel = "Style Helper";
 
     internal static WorkRelaxOverlayLayout Resolve(float width, float rowHeight)
     {

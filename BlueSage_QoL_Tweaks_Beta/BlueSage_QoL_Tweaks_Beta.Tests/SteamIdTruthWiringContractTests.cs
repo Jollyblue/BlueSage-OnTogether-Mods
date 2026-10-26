@@ -154,7 +154,8 @@ public sealed class SteamIdTruthWiringContractTests
     {
         string controller = ReadSource("NativeIdCardController.cs");
 
-        Assert.That(controller, Does.Contain("Plugin.Instance?.ShowToast(NativeIdCardUnconfirmedToast)"));
+        // Round 5h: chat twin as well, so the message survives Toast Pop-ups being off.
+        Assert.That(controller, Does.Contain("Plugin.AddLocalNotificationWithToast(NativeIdCardUnconfirmedToast)"));
     }
 
     private static string ReadSource(string fileName)

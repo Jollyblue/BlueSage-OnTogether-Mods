@@ -67,7 +67,7 @@ public sealed partial class UltraReviewRound2FindingsTests
     public void Welcome_detection_passes_the_visible_lobby_check_lazily()
     {
         string plugin = ReadSource("Plugin.cs");
-        string detect = Slice(plugin, "private static bool TryGetCurrentLobbyKeyForWelcomeMessage(out string lobbyKey)", "private bool ShowWelcomeMessageForLobby()");
+        string detect = Slice(plugin, "private static bool TryGetCurrentLobbyKeyForWelcomeMessage(out string lobbyKey)", "private bool ShowWelcomeMessageForLobby(bool quietReconnectVisit)");
 
         Assert.Multiple(() =>
         {

@@ -39,11 +39,13 @@ public sealed class OverlayMenuButtonsContractTests
         // Review 2026-10-18: one shared path, so a later fix to the hotkey can't miss the button.
         Assert.Multiple(() =>
         {
-            Assert.That(qol, Does.Contain("ToggleQolMenuWindow(\"the overlay's QoL-Menu button\");"));
+            Assert.That(qol, Does.Contain("ToggleQolMenuWindow(\"the overlay's QoL Menu button\");"));
             Assert.That(hotkey, Does.Contain("ToggleQolMenuWindow($\"{QolMenuKey.Value} key\");"));
             Assert.That(shared, Does.Contain("StartQolMenuWindow();"));
             Assert.That(shared, Does.Contain("_qolMenuWindow.ToggleVisible();"));
-            Assert.That(shared, Does.Contain("ShowToast(_qolMenuWindow.IsVisible ? \"QoL menu opened.\" : \"QoL menu closed.\");"));
+            // Voice pass (2026-10-23) NOISE 4: the menu itself appearing is the answer; no "QoL menu opened" toast.
+            Assert.That(shared, Does.Not.Contain("ShowToast("));
+            Assert.That(shared, Does.Not.Contain("QoL menu opened."));
             // Blue, 2026-10-18 (final review): opening or closing either menu shows a toast only. No chat line,
             // so the chat log doesn't fill up with menu toggles.
             Assert.That(shared, Does.Not.Contain("AddLocalNotification("));

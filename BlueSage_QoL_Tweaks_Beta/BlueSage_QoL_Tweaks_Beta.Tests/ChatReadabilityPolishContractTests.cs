@@ -51,7 +51,7 @@ public sealed class ChatReadabilityPolishContractTests
         Assert.That(menu, Does.Contain("Chat font size grows message text only"));
         Assert.That(menu, Does.Contain("Whole chat UI scale grows the panel/input/backdrop too"));
         Assert.That(menu, Does.Contain("Native Global/Local tabs stay game-owned"));
-        Assert.That(menu, Does.Contain("Reset Chat UI to Vanilla"));
+        Assert.That(menu, Does.Contain("Reset Chat to the Game's Default"));
         Assert.That(menu, Does.Not.Contain("Chat history rows"));
         Assert.That(menu, Does.Contain("Normal outline color"));
         Assert.That(menu, Does.Contain("Black text outline color"));
@@ -227,7 +227,8 @@ public sealed class ChatReadabilityPolishContractTests
             Assert.That(patch, Does.Contain("DestroyOwnedMaterial(state?.AppliedFontMaterial)"));
             Assert.That(patch, Does.Contain("OriginalSurfaceScales.Remove(id)"));
             Assert.That(patch, Does.Contain("OriginalSurfaceWindowSizes.Remove(id)"));
-            Assert.That(patch, Does.Contain("GetDiagnosticStateSummary"));
+            // Round 4 R9: the state summary fed only the removed hidden diagnostics.
+            Assert.That(patch, Does.Not.Contain("GetDiagnosticStateSummary"));
         });
     }
 

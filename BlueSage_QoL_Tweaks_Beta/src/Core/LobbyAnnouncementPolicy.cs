@@ -172,7 +172,7 @@ internal static class SteamIdTruthAlertPolicy
 internal static class LobbyMotdPolicy
 {
     internal const string Version = "motd1";
-    internal const string DefaultMessage = "Welcome to my server!";
+    internal const string DefaultMessage = "Welcome to my lobby!";
 
     internal static string Effective(string? configured)
     {
@@ -213,4 +213,54 @@ internal static class LobbyMotdPolicy
     {
         return "Message from the host: " + text;
     }
+}
+
+// Voice pass (2026-10-23): fewer repeats. A Reconnect Guard return to the SAME lobby skips the welcome line,
+// the long Tip line and the host's pinned message (the player already saw them), and the long Tip line shows
+// only on the first lobby visit of a game session.
+internal static class WelcomeRepeatPolicy
+{
+    private const string ScenePrefix = "|scene:";
+
+    // The lobby id inside a visit key ("steam:<id>|scene:<n>" or "code:<id>|scene:<n>"; the Steam lobby id is
+    // the join code). A "visible|scene:" key has no id, so it never counts as a reconnect return.
+    internal static string LobbyIdOf(string? visitKey)
+    {
+        if (string.IsNullOrEmpty(visitKey))
+        {
+            return string.Empty;
+        }
+
+        int colon = visitKey!.IndexOf(':');
+        int scene = visitKey.IndexOf(ScenePrefix, StringComparison.Ordinal);
+        if (colon < 0 || scene < 0 || colon > scene)
+        {
+            return string.Empty;
+        }
+
+        string prefix = visitKey.Substring(0, colon);
+        if (!string.Equals(prefix, "steam", StringComparison.Ordinal) && !string.Equals(prefix, "code", StringComparison.Ordinal))
+        {
+            return string.Empty;
+        }
+
+        return visitKey.Substring(colon + 1, scene - colon - 1).Trim();
+    }
+
+    // True only when Reconnect Guard joined this exact lobby AND it is the lobby the player was in before the drop.
+    // A replacement lobby (same host, new lobby) is a new place, so its welcome still shows.
+    internal static bool IsQuietReconnectReturn(string? visitKey, string? reconnectTargetLobbyId, string? lobbyIdBeforeDrop)
+    {
+        string current = LobbyIdOf(visitKey);
+        return current.Length > 0 &&
+               string.Equals(current, (reconnectTargetLobbyId ?? string.Empty).Trim(), StringComparison.Ordinal) &&
+               string.Equals(current, (lobbyIdBeforeDrop ?? string.Empty).Trim(), StringComparison.Ordinal);
+    }
+
+    internal static bool ShouldShowWelcome(bool quietReconnectReturn) => !quietReconnectReturn;
+
+    internal static bool ShouldShowTip(bool tipShownThisSession, bool quietReconnectReturn) =>
+        !tipShownThisSession && !quietReconnectReturn;
+
+    internal static bool ShouldShowHostMessage(bool quietReconnectReturn) => !quietReconnectReturn;
 }

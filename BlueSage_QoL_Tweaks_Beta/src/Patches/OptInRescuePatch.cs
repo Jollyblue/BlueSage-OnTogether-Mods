@@ -105,7 +105,7 @@ internal static class OptInRescuePatch
         if (request.Action == "unhook")
         {
             Stop();
-            Plugin.AddLocalNotificationWithToast("BlueSage rescue: lobby owner released follow.");
+            Plugin.AddLocalNotificationWithToast("The host stopped guiding you. You can move freely.");
             return RescueApplyResult.Applied;
         }
         if (Time.unscaledTime < _cooldownUntil) return RescueApplyResult.Deferred;
@@ -135,9 +135,7 @@ internal static class OptInRescuePatch
         ApplyLocalRescuePosition(chat, _ownerTransform.position + Vector3.right * 1.25f, forceOwnerSync: true);
         _nextHookForceSyncAt = 0f;
         _hookUntil = request.Action == "hook" ? Time.unscaledTime + request.Seconds : request.Action == "hooklong" ? float.PositiveInfinity : 0f;
-        Plugin.AddLocalNotificationWithToast(request.Action == "hook" || request.Action == "hooklong"
-            ? (request.Action == "hooklong" ? "BlueSage rescue: long-haul follow active until release or disconnect." : $"BlueSage rescue: following the lobby owner for up to {request.Seconds}s.")
-            : "BlueSage rescue: moved near the current lobby owner.");
+        Plugin.AddLocalNotificationWithToast("The host is guiding you over.");
         return RescueApplyResult.Applied;
     }
 

@@ -33,7 +33,10 @@ public sealed class AvatarStyleSlotsContractTests
     {
         Assert.That(Source, Does.Contain("slot >= NativeSlotCount"));
         Assert.That(Source, Does.Contain("Mathf.Clamp(zip.SelectedStyleIndex, 0, NativeSlotCount - 1)"));
-        Assert.That(Source, Does.Contain("qol-avatar-styles.cfg"));
+        // Round 4 review R4: the old ".cfg" pin passed vacuously once slots moved to the crash-safe store.
+        Assert.That(Source, Does.Contain("com.bluesage.ontogether.qol-avatar-styles.store"));
+        Assert.That(Source, Does.Contain("AvatarSlotStore.Save(_storePath, _selectedSlot, _legacyConfigHash, SlotNames, SlotPayloads)"));
+        Assert.That(Source, Does.Contain("SaveOnConfigSet = false"), "The legacy .cfg is read, never written.");
         Assert.That(Source, Does.Contain("PayloadVersion = \"BSAS1\""));
         Assert.That(Source, Does.Not.Contain("CustomizationDataIDsDict ="));
         Assert.That(Source, Does.Not.Contain("CustomizationDataIDs1Dict ="));
@@ -66,7 +69,7 @@ public sealed class AvatarStyleSlotsContractTests
         string menu = File.ReadAllText(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", "..", "src", "QolMenuWindow.cs"));
         Assert.That(plugin, Does.Contain("EnableExtendedAvatarStyles"));
         Assert.That(plugin, Does.Contain("Config.Bind(\"Avatar Styles\", \"EnableExtendedAvatarStyles\", true"));
-        Assert.That(menu, Does.Contain("DrawToggle(\"Avatar Presets 4-9\""));
+        Assert.That(menu, Does.Contain("DrawToggle(\"Extra Outfit Slots 4-9\""), "Round 5h renamed the switch in plain words (config key EnableExtendedAvatarStyles is unchanged).");
         Assert.That(menu, Does.Not.Contain("EXPERIMENTAL - Avatar Presets 4-9"));
         Assert.That(menu, Does.Contain("AvatarStyleSlotsBridge.RefreshEnabledState"));
         Assert.That(Source, Does.Contain("DisableAndRestoreVanilla"));
@@ -112,7 +115,7 @@ public sealed class AvatarStyleSlotsContractTests
     {
         int snapshot = Source.IndexOf("CustomizationData editorData = new CustomizationData(liveEditorData);");
         int reset = Source.IndexOf("ResetUnsavedCustomizationMethod?.Invoke", snapshot);
-        int save = Source.IndexOf("SaveExtendedData(editorData, _activeExtendedSlot);", snapshot);
+        int save = Source.IndexOf("SaveExtendedData(new CustomizationDataIDs3(editorData), _activeExtendedSlot);", snapshot);
         int apply = Source.IndexOf("MainCustomizationController.ApplyCustomization(editorData);", snapshot);
 
         Assert.That(snapshot, Is.GreaterThanOrEqualTo(0));

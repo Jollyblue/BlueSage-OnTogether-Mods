@@ -13,23 +13,9 @@ namespace BlueSage.QoLTweaks.Patches;
 internal static class PlayerPanelSurfaceController
 {
     private const string LaneName = "BlueSage_ActionLane";
-    private const int HierarchyDiagnosticMaximumEntries = 128;
-    private const float HierarchyDiagnosticRepeatSeconds = 30f;
-    private const int HierarchyDiagnosticMaximumDepth = 8;
-    private const int HierarchyDiagnosticMaximumPathLength = 256;
 
     private static readonly FieldInfo ReportButtonField =
         AccessTools.Field(typeof(PlayerItemController), "_reportButton");
-    private static readonly FieldInfo SyncButtonField =
-        AccessTools.Field(typeof(PlayerItemController), "_syncButton");
-    private static readonly FieldInfo SyncImageField =
-        AccessTools.Field(typeof(PlayerItemController), "_syncImage");
-    private static readonly FieldInfo SteamButtonField =
-        AccessTools.Field(typeof(PlayerItemController), "_steamButton");
-    private static readonly FieldInfo VoiceButtonField =
-        AccessTools.Field(typeof(PlayerItemController), "_voiceMuteButton");
-    private static readonly Dictionary<string, float> LastHierarchyDiagnosticAt =
-        new Dictionary<string, float>(StringComparer.Ordinal);
     private static readonly Dictionary<int, BlueSagePlayerPanelSurfaceMarker>
         OwnedLanesByRowInstanceId =
             new Dictionary<int, BlueSagePlayerPanelSurfaceMarker>();
@@ -84,23 +70,11 @@ internal static class PlayerPanelSurfaceController
             if (decision.Action == PlayerPanelSurfaceAction.Remove)
             {
                 DestroyOwnedLane(marker);
-                EmitHierarchyDiagnosticIfEnabled(
-                    "owned-lane-removed",
-                    row,
-                    reportButton,
-                    anchor);
                 return;
             }
 
             if (decision.Action == PlayerPanelSurfaceAction.None)
             {
-                EmitHierarchyDiagnosticIfEnabled(
-                    anchor == null
-                        ? "serialized-report-anchor-unavailable"
-                        : "surface-ineligible",
-                    row,
-                    reportButton,
-                    anchor);
                 return;
             }
 
@@ -120,11 +94,6 @@ internal static class PlayerPanelSurfaceController
             if (marker == null || anchor == null || reportButton == null)
             {
                 DestroyOwnedLane(marker);
-                EmitHierarchyDiagnosticIfEnabled(
-                    "owned-lane-create-failed",
-                    row,
-                    reportButton,
-                    anchor);
                 return;
             }
 
@@ -172,11 +141,6 @@ internal static class PlayerPanelSurfaceController
             if (mentionButton == null || nativeIdButton == null)
             {
                 DestroyOwnedLane(marker);
-                EmitHierarchyDiagnosticIfEnabled(
-                    "owned-button-create-failed",
-                    row,
-                    reportButton,
-                    anchor);
                 return;
             }
 
@@ -308,7 +272,6 @@ internal static class PlayerPanelSurfaceController
         {
             DestroyOwnedLane(marker);
         }
-        LastHierarchyDiagnosticAt.Clear();
     }
 
     internal static void UnregisterOwnedLane(
@@ -811,108 +774,6 @@ internal static class PlayerPanelSurfaceController
         }
     }
 
-    private static void EmitHierarchyDiagnosticIfEnabled(
-        string reason,
-        PlayerItemController row,
-        Button reportButton,
-        Transform anchor)
-    {
-        if (!Plugin.ShouldEmitHiddenDiagnostics || row == null)
-        {
-            return;
-        }
-
-        float now = Time.unscaledTime;
-        string key = row.GetInstanceID() + "|" + (reason ?? string.Empty);
-        if (LastHierarchyDiagnosticAt.TryGetValue(
-                key,
-                out float lastAt) &&
-            now - lastAt < HierarchyDiagnosticRepeatSeconds)
-        {
-            return;
-        }
-        if (LastHierarchyDiagnosticAt.Count >=
-            HierarchyDiagnosticMaximumEntries)
-        {
-            LastHierarchyDiagnosticAt.Clear();
-        }
-        LastHierarchyDiagnosticAt[key] = now;
-
-        Button syncButton = SyncButtonField?.GetValue(row) as Button;
-        Image syncImage = SyncImageField?.GetValue(row) as Image;
-        Button steamButton = SteamButtonField?.GetValue(row) as Button;
-        Button voiceButton = VoiceButtonField?.GetValue(row) as Button;
-        Plugin.Log?.LogInfo(
-            "[BlueSagePanelHierarchy] authority=diagnostic-only;" +
-            " fallbackEnabled=false;" +
-            " reason=" + SafeDiagnosticValue(reason) + ";" +
-            " rowPath=" + BuildBoundedPath(row.transform, row.transform) + ";" +
-            " reportPath=" +
-            BuildBoundedPath(row.transform, reportButton?.transform) + ";" +
-            " anchorPath=" +
-            BuildBoundedPath(row.transform, anchor) + ";" +
-            " syncSharesAnchor=" +
-            SharesParent(syncButton?.transform, anchor) + ";" +
-            " syncImageSharesAnchor=" +
-            SharesParent(syncImage?.transform, anchor) + ";" +
-            " steamSharesAnchor=" +
-            SharesParent(steamButton?.transform, anchor) + ";" +
-            " voiceSharesAnchor=" +
-            SharesParent(voiceButton?.transform, anchor) + ";" +
-            " pomoState=" + row.CurrentPomoState + ".");
-    }
-
-    private static bool SharesParent(
-        Transform control,
-        Transform expectedParent)
-    {
-        return control != null &&
-               expectedParent != null &&
-               ReferenceEquals(control.parent, expectedParent);
-    }
-
-    private static string BuildBoundedPath(
-        Transform root,
-        Transform node)
-    {
-        if (root == null || node == null)
-        {
-            return "unavailable";
-        }
-
-        var segments = new List<string>();
-        Transform current = node;
-        int depth = 0;
-        while (current != null &&
-               depth < HierarchyDiagnosticMaximumDepth)
-        {
-            segments.Add(SafeDiagnosticValue(current.name));
-            if (current == root)
-            {
-                break;
-            }
-            current = current.parent;
-            depth++;
-        }
-        segments.Reverse();
-        string path = string.Join("/", segments.ToArray());
-        return path.Length <= HierarchyDiagnosticMaximumPathLength
-            ? path
-            : path.Substring(
-                  0,
-                  HierarchyDiagnosticMaximumPathLength - 1) + "…";
-    }
-
-    private static string SafeDiagnosticValue(string value)
-    {
-        string safe = string.IsNullOrWhiteSpace(value)
-            ? "none"
-            : value.Replace("\r", " ").Replace("\n", " ").Replace(";", "_");
-        return safe.Length <= 64
-            ? safe
-            : safe.Substring(0, 63) + "…";
-    }
-
     private static float Dimension(
         float rectValue,
         float sizeDeltaValue,
@@ -944,9 +805,6 @@ internal static class PlayerPanelSurfaceRosterLifecyclePatch
 internal sealed class BlueSagePlayerPanelSurfaceMarker : MonoBehaviour
 {
     private const int LayoutSettleFrameBudget = 30;
-    private static int _created;
-    private static int _destroyed;
-    private static int _live;
 
     internal string BoundSteamId = string.Empty;
     internal bool IsRetired;
@@ -960,12 +818,6 @@ internal sealed class BlueSagePlayerPanelSurfaceMarker : MonoBehaviour
     internal NetworkTransform ExpectedNetworkTransform;
     internal Button LayoutReferenceButton;
     private int _layoutSettleFramesRemaining;
-
-    private void Awake()
-    {
-        System.Threading.Interlocked.Increment(ref _created);
-        System.Threading.Interlocked.Increment(ref _live);
-    }
 
     internal void RequestLayoutSettle(Button reportButton)
     {
@@ -992,68 +844,11 @@ internal sealed class BlueSagePlayerPanelSurfaceMarker : MonoBehaviour
     private void OnDestroy()
     {
         PlayerPanelSurfaceController.UnregisterOwnedLane(this);
-        System.Threading.Interlocked.Increment(ref _destroyed);
-        System.Threading.Interlocked.Decrement(ref _live);
-    }
-
-    internal static string GetDiagnosticSummary()
-    {
-        return "lanesLive=" +
-               System.Threading.Interlocked.CompareExchange(
-                   ref _live,
-                   0,
-                   0) +
-               ",lanesCreated=" +
-               System.Threading.Interlocked.CompareExchange(
-                   ref _created,
-                   0,
-                   0) +
-               ",lanesDestroyed=" +
-               System.Threading.Interlocked.CompareExchange(
-                   ref _destroyed,
-                   0,
-                   0);
     }
 }
 
 internal sealed class BlueSageEnhancedPanelButtonMarker : MonoBehaviour
 {
-    private static int _created;
-    private static int _destroyed;
-    private static int _live;
 
     internal string ActionName = string.Empty;
-
-    private void Awake()
-    {
-        System.Threading.Interlocked.Increment(ref _created);
-        System.Threading.Interlocked.Increment(ref _live);
-    }
-
-    private void OnDestroy()
-    {
-        System.Threading.Interlocked.Increment(ref _destroyed);
-        System.Threading.Interlocked.Decrement(ref _live);
-    }
-
-    internal static string GetDiagnosticSummary()
-    {
-        return "buttonsLive=" +
-               System.Threading.Interlocked.CompareExchange(
-                   ref _live,
-                   0,
-                   0) +
-               ",buttonsCreated=" +
-               System.Threading.Interlocked.CompareExchange(
-                   ref _created,
-                   0,
-                   0) +
-               ",buttonsDestroyed=" +
-               System.Threading.Interlocked.CompareExchange(
-                   ref _destroyed,
-                   0,
-                   0) +
-               "," +
-               BlueSagePlayerPanelSurfaceMarker.GetDiagnosticSummary();
-    }
 }

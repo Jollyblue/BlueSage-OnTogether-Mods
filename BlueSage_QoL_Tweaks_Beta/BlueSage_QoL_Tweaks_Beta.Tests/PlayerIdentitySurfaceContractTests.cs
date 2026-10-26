@@ -130,8 +130,8 @@ public sealed class PlayerIdentitySurfaceContractTests
             Assert.That(evidence, Does.Contain("No hidden or guessed row is actionable"));
             Assert.That(moderation, Does.Contain("uniquePlayerId"));
             Assert.That(menu, Does.Contain("TryGetNativeBanRecords"));
-            Assert.That(menu, Does.Contain("Native banned-player list is NOT AVAILABLE"));
-            Assert.That(menu, Does.Contain("No empty-list claim"));
+            Assert.That(menu, Does.Contain("The game's ban list can't be read right now"));
+            Assert.That(menu, Does.Contain("no unban is offered until it can"));
         });
     }
 

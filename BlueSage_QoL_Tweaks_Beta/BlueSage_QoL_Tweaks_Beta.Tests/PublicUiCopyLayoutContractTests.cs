@@ -17,7 +17,7 @@ public sealed class PublicUiCopyLayoutContractTests
             Assert.That(source, Does.Contain("Green Steam-profile buttons verify player accounts"));
             Assert.That(source, Does.Contain("VoiceWelcomePolicy.Build"));
             Assert.That(source, Does.Contain("Pomodoro/focus timer can earn tickets and XP"));
-            Assert.That(Slice(source, "private bool ShowWelcomeMessageForLobby()", "private void RefreshCompatibility(string source)"), Does.Not.Contain("/sidwho"));
+            Assert.That(Slice(source, "private bool ShowWelcomeMessageForLobby(bool quietReconnectVisit)", "private void RefreshCompatibility(string source)"), Does.Not.Contain("/sidwho"));
             Assert.That(source, Does.Not.Contain("AddGlobalChatMessage(\"BlueSage QoL v"));
         });
     }

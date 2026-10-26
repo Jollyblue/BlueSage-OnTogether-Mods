@@ -122,12 +122,13 @@ internal static class WorkRelaxCommandPolicy
         WorkRelaxMode? current = readMode();
         if (current.HasValue && current.Value == requested)
         {
-            return BlueSageCommandResult.HandledWithMessages();
+            return BlueSageCommandResult.HandledWithMessages(
+                "You're already in " + requested + " mode.");
         }
 
         if (!setMode(requested))
         {
-            return BlueSageCommandResult.HandledWithMessages("Mode is waiting for local statistics.");
+            return BlueSageCommandResult.HandledWithMessages("Work/Relax isn't ready yet. Try again in a few seconds.");
         }
 
         return BlueSageCommandResult.HandledWithMessages("Mode: " + requested + ".");

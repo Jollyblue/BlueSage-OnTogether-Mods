@@ -257,6 +257,8 @@ internal static class NativeManagerCache
 {
     private static readonly Dictionary<Type, UnityEngine.Object> LiveObjects =
         new Dictionary<Type, UnityEngine.Object>();
+    private static readonly Dictionary<Type, float> LastMissAt =
+        new Dictionary<Type, float>();
 
     internal static UnityEngine.Object FindLiveObject(Type type)
     {
@@ -264,18 +266,31 @@ internal static class NativeManagerCache
         if (LiveObjects.TryGetValue(type, out UnityEngine.Object cached) &&
             !ReferenceEquals(cached, null) && cached != null) return cached;
 
+        // Round 4 WS5: a recent miss (menu, loading) waits instead of scanning every loaded object again.
+        float now = Time.unscaledTime;
+        float lastMissAt = LastMissAt.TryGetValue(type, out float missedAt) ? missedAt : -1f;
+        if (!NativeLookupCooldownPolicy.ShouldScan(lastMissAt, now, NativeLookupCooldownPolicy.MissCooldownSeconds)) return null;
+
         UnityEngine.Object[] candidates = Resources.FindObjectsOfTypeAll(type);
-        if (candidates == null) return null;
-        foreach (UnityEngine.Object candidate in candidates)
+        if (candidates != null)
         {
-            if (ReferenceEquals(candidate, null) || candidate == null) continue;
-            LiveObjects[type] = candidate;
-            return candidate;
+            foreach (UnityEngine.Object candidate in candidates)
+            {
+                if (ReferenceEquals(candidate, null) || candidate == null) continue;
+                LiveObjects[type] = candidate;
+                LastMissAt.Remove(type);
+                return candidate;
+            }
         }
 
         LiveObjects.Remove(type);
+        LastMissAt[type] = now;
         return null;
     }
 
-    internal static void Clear() => LiveObjects.Clear();
+    internal static void Clear()
+    {
+        LiveObjects.Clear();
+        LastMissAt.Clear();
+    }
 }

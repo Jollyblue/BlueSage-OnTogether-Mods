@@ -48,7 +48,7 @@ public sealed class CommunityBanListRuntimeContractTests
             Assert.That(policy, Does.Contain("BuildStatusText"));
             Assert.That(policy, Does.Contain("BuildAttestationJson"));
             Assert.That(menu, Does.Contain("On for fresh installs"));
-            Assert.That(menu, Does.Contain("preserves every existing row"));
+            Assert.That(menu, Does.Contain("It never removes anything"));
             Assert.That(readme, Does.Contain("Community Safety and the Performance Overlay start on"));
             Assert.That(readme, Does.Not.Contain("verified current host only"));
             Assert.That(readme, Does.Not.Contain("Verified hosts may enable the default-on additive community BanData"));

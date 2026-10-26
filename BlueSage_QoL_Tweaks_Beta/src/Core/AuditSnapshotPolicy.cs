@@ -1,24 +1,25 @@
 using System;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 
 namespace BlueSage.QoLTweaks.Core;
 
+// Round 5d: a snapshot is one file in the session folder, "<yyyy-MM-dd_HHmmss>-snapshot-game-log.log" (local time),
+// holding the newest AuditSnapshotMaxBytes of the live BepInEx log from a whole line. Two are kept per session.
 internal static class AuditSnapshotPolicy
 {
-    public const int MaxRetainedSnapshots = 8;
+    public const int MaxRetainedSnapshots = LocalFileBudgetPolicy.AuditSnapshotsPerSession;
+    private const string SnapshotSuffix = "-snapshot-game-log.log";
 
     public static bool TryCreate(
         string sourceLogPath,
         string sessionDirectory,
-        DateTime utcNow,
-        string nonce,
-        out string snapshotDirectory,
+        DateTime localNow,
+        out string snapshotPath,
         out long capturedBytes,
         out string error)
     {
-        snapshotDirectory = string.Empty;
+        snapshotPath = string.Empty;
         capturedBytes = 0;
         error = string.Empty;
         string temporaryPath = string.Empty;
@@ -30,25 +31,31 @@ internal static class AuditSnapshotPolicy
             if (string.IsNullOrWhiteSpace(sessionDirectory))
                 throw new ArgumentException("The audit session directory is unavailable.", nameof(sessionDirectory));
 
-            string safeNonce = NormalizeNonce(nonce);
             string sessionRoot = Path.GetFullPath(sessionDirectory);
-            string snapshotsRoot = Path.Combine(sessionRoot, "snapshots");
-            Directory.CreateDirectory(snapshotsRoot);
-            string token = "snapshot-" + utcNow.ToUniversalTime().ToString("yyyyMMdd'T'HHmmssfff'Z'", CultureInfo.InvariantCulture) + "-" + safeNonce;
-            snapshotDirectory = Path.Combine(snapshotsRoot, token);
-            Directory.CreateDirectory(snapshotDirectory);
-
-            string finalPath = Path.Combine(snapshotDirectory, "LogOutput.log");
-            temporaryPath = Path.Combine(snapshotDirectory, "LogOutput.log.tmp");
+            Directory.CreateDirectory(sessionRoot);
+            string finalPath = Path.Combine(sessionRoot, ModSuiteLayoutPolicy.SnapshotFileName(localNow));
+            if (File.Exists(finalPath))
+                throw new IOException("A snapshot was already taken this second; try again in a moment.");
+            temporaryPath = finalPath + ".tmp";
             using (var source = new FileStream(sourceLogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 64 * 1024, FileOptions.SequentialScan))
             {
                 long boundary = source.Length;
+                long start = Math.Max(0L, boundary - LocalFileBudgetPolicy.AuditSnapshotMaxBytes);
+                source.Position = start;
+                if (start > 0)
+                {
+                    int next;
+                    while ((next = source.ReadByte()) >= 0 && next != '\n')
+                    {
+                    }
+                }
+
                 using (var destination = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 64 * 1024, FileOptions.SequentialScan))
                 {
                     byte[] buffer = new byte[64 * 1024];
-                    while (capturedBytes < boundary)
+                    while (source.Position < boundary)
                     {
-                        int wanted = (int)Math.Min(buffer.Length, boundary - capturedBytes);
+                        int wanted = (int)Math.Min(buffer.Length, boundary - source.Position);
                         int read = source.Read(buffer, 0, wanted);
                         if (read <= 0)
                             throw new EndOfStreamException("The live BepInEx log changed before its captured boundary could be copied.");
@@ -61,53 +68,39 @@ internal static class AuditSnapshotPolicy
             }
 
             File.Move(temporaryPath, finalPath);
-            PruneSnapshots(snapshotsRoot, snapshotDirectory);
+            snapshotPath = finalPath;
+            PruneSnapshots(sessionRoot, finalPath);
             return true;
         }
         catch (Exception ex)
         {
             error = ex.Message;
             TryDeleteFile(temporaryPath);
-            TryDeleteEmptyDirectory(snapshotDirectory);
-            snapshotDirectory = string.Empty;
+            snapshotPath = string.Empty;
             capturedBytes = 0;
             return false;
         }
     }
 
-    private static string NormalizeNonce(string nonce)
+    private static void PruneSnapshots(string sessionRoot, string keepPath)
     {
-        string value = new string((nonce ?? string.Empty).Where(char.IsLetterOrDigit).Take(16).ToArray()).ToLowerInvariant();
-        if (value.Length < 4) throw new ArgumentException("Snapshot nonce must contain at least four letters or digits.", nameof(nonce));
-        return value;
-    }
-
-    private static void PruneSnapshots(string snapshotsRoot, string keepDirectory)
-    {
-        string root = Path.GetFullPath(snapshotsRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        string keep = Path.GetFullPath(keepDirectory);
-        var directories = new DirectoryInfo(snapshotsRoot).GetDirectories("snapshot-*")
-            .OrderByDescending(directory => directory.Name, StringComparer.Ordinal)
+        string root = sessionRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var snapshots = new DirectoryInfo(sessionRoot).GetFiles("*" + SnapshotSuffix)
+            .OrderByDescending(file => file.Name, StringComparer.Ordinal)
             .ToList();
 
-        foreach (DirectoryInfo directory in directories.Skip(MaxRetainedSnapshots))
+        foreach (FileInfo file in snapshots.Skip(MaxRetainedSnapshots))
         {
-            string candidate = Path.GetFullPath(directory.FullName);
-            if (!candidate.StartsWith(root, StringComparison.OrdinalIgnoreCase) || string.Equals(candidate, keep, StringComparison.OrdinalIgnoreCase))
+            string candidate = Path.GetFullPath(file.FullName);
+            if (!candidate.StartsWith(root, StringComparison.OrdinalIgnoreCase) || string.Equals(candidate, keepPath, StringComparison.OrdinalIgnoreCase))
                 continue;
-            directory.Delete(true);
+            file.Delete();
         }
     }
 
     private static void TryDeleteFile(string path)
     {
         try { if (!string.IsNullOrEmpty(path) && File.Exists(path)) File.Delete(path); }
-        catch { }
-    }
-
-    private static void TryDeleteEmptyDirectory(string path)
-    {
-        try { if (!string.IsNullOrEmpty(path) && Directory.Exists(path) && !Directory.EnumerateFileSystemEntries(path).Any()) Directory.Delete(path); }
         catch { }
     }
 }

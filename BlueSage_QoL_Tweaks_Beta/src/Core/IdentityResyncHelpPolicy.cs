@@ -40,13 +40,18 @@ internal sealed class IdentityResyncHelpPresentation
 
 internal static class IdentityResyncHelpPolicy
 {
+    // The controller's success replies start with these; FormatActionResult keys on them.
+    internal const string RefreshDonePrefix = "Player list refreshed.";
+    internal const string RecheckDonePrefix = "Player matching recheck finished.";
+
     internal static string FormatActionResult(
         string action,
         string rawResult,
         IdentityResyncCoverage coverage)
     {
+        rawResult = rawResult ?? string.Empty;
         if (action == "refresh" &&
-            rawResult.StartsWith("Identity refresh rebuilt"))
+            rawResult.StartsWith(RefreshDonePrefix, System.StringComparison.Ordinal))
         {
             return coverage.Ready
                 ? "Player list refreshed. Every visible player is still matched safely. No player action was taken."
@@ -54,7 +59,7 @@ internal static class IdentityResyncHelpPolicy
         }
 
         if (action == "repair" &&
-            rawResult.StartsWith("Identity repair completed"))
+            rawResult.StartsWith(RecheckDonePrefix, System.StringComparison.Ordinal))
         {
             return coverage.Ready
                 ? "Player matching recheck finished. Every visible player is matched safely. No player action was taken."
@@ -111,7 +116,7 @@ internal static class IdentityResyncHelpPolicy
         return new IdentityResyncHelpPresentation(
             healthy: false,
             statusHeading: "Some player rows are still being matched",
-            whatThisMeans: "The game, Steam lobby, and network do not agree yet. BlueSage keeps player-specific host actions locked so the wrong person cannot be targeted.",
+            whatThisMeans: "The game, Steam lobby, and network do not agree yet for every row. BlueSage keeps host actions locked on the rows it can't match, so the wrong person cannot be targeted; matched players can still be managed.",
             whatToDo: "BlueSage is already checking again. Wait a few seconds after anyone joins or leaves. If the list still looks wrong, use step 1. The host should use step 2 only if step 1 does not fix it.",
             refreshButtonLabel: "1. Refresh Player List",
             refreshExplanation: refreshExplanation,

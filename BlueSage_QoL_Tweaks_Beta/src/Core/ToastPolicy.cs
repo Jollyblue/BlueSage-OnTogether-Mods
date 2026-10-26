@@ -94,17 +94,76 @@ internal static class ToastPolicy
     internal static bool IsDuplicateOfVisible(
         string text,
         System.Collections.Generic.IReadOnlyList<ToastEntry> visible,
-        float now)
+        float now) => IsDuplicateOfVisible(text, visible, now, HoldSeconds);
+
+    // Round 5d: compares against the player's own reading time, so a longer hold cannot stack twins.
+    internal static bool IsDuplicateOfVisible(
+        string text,
+        System.Collections.Generic.IReadOnlyList<ToastEntry> visible,
+        float now,
+        float holdSeconds)
     {
         if (visible == null) return false;
         for (int i = 0; i < visible.Count; i++)
         {
             if (string.Equals(visible[i].Text, text, System.StringComparison.Ordinal) &&
-                !IsExpired(now - visible[i].ShownAt))
+                !IsExpired(now - visible[i].ShownAt, holdSeconds))
             {
                 return true;
             }
         }
         return false;
+    }
+
+    // Round 5h: results that already exist as chat lines or footer text become one short plain toast line: rich-text
+    // tags removed, only the first sentence (or first line) kept, cut at a word when it is long. Blank or generic
+    // text ("Ready.", "Done.") gives null, so nothing is shown.
+    internal const int MaxSummaryLength = 110;
+
+    internal static string Summarize(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        string plain = System.Text.RegularExpressions.Regex.Replace(text, "<[^>]+>", string.Empty);
+        int lineEnd = plain.IndexOfAny(new[] { '\r', '\n' });
+        if (lineEnd >= 0)
+        {
+            plain = plain.Substring(0, lineEnd);
+        }
+
+        plain = System.Text.RegularExpressions.Regex.Replace(plain, "\\s+", " ").Trim();
+        int sentenceEnd = -1;
+        for (int i = 0; i + 1 < plain.Length; i++)
+        {
+            if ((plain[i] == '.' || plain[i] == '!' || plain[i] == '?') && plain[i + 1] == ' ')
+            {
+                sentenceEnd = i;
+                break;
+            }
+        }
+
+        if (sentenceEnd >= 0)
+        {
+            plain = plain.Substring(0, sentenceEnd + 1);
+        }
+
+        if (plain.Length == 0 ||
+            string.Equals(plain, "Ready.", System.StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(plain, "Done.", System.StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (plain.Length > MaxSummaryLength)
+        {
+            int room = MaxSummaryLength - 3;
+            int cut = plain.LastIndexOf(' ', room);
+            plain = plain.Substring(0, cut > room / 2 ? cut : room).TrimEnd() + "...";
+        }
+
+        return plain;
     }
 }

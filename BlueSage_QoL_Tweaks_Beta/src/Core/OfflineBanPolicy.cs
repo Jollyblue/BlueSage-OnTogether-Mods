@@ -19,10 +19,29 @@ internal static class OfflineBanPolicy
         out string reason)
     {
         reason = "Offline SteamID64 bans require the active host, an exact absent target, and a valid native ban list.";
+        if (!targetIsAbsent)
+        {
+            return false;
+        }
+
+        return CanSaveWithoutLiveRow(ownerSteamId, issuerSteamId, targetSteamId, persistedHelpers, targetIsProtectedVictim, out reason);
+    }
+
+    // Stage C, review P2: the same host-only rules for a target that has no live row to kick but is NOT confirmed
+    // absent (a Steam lobby member whose connection has not completed). Callers say which case they are in.
+    internal static bool CanSaveWithoutLiveRow(
+        string ownerSteamId,
+        string issuerSteamId,
+        string targetSteamId,
+        string persistedHelpers,
+        bool targetIsProtectedVictim,
+        out string reason)
+    {
+        reason = "Saving a SteamID64 ban without a live row requires the active host and a valid native ban list.";
         if (!ModerationProtocolPolicy.IsSteamId64(ownerSteamId) ||
             !ModerationProtocolPolicy.IsSteamId64(issuerSteamId) ||
             !ModerationProtocolPolicy.IsSteamId64(targetSteamId) ||
-            !targetIsAbsent || targetIsProtectedVictim)
+            targetIsProtectedVictim)
         {
             return false;
         }

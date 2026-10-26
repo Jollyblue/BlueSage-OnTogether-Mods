@@ -45,8 +45,89 @@ internal sealed class BlueSageReportSurfaceContractTests
             Assert.That(source, Does.Contain("BlueSageJournalMoodTextureResolver"));
             Assert.That(source, Does.Contain("_moodIcons"));
             Assert.That(source, Does.Contain("DrawTextureWithTexCoords"));
-            Assert.That(source, Does.Contain("Native Journal face textures unavailable; plain-English labels remain active."));
+            Assert.That(source, Does.Contain("The game's Journal faces aren't available right now, so the names are shown instead."));
             Assert.That(source, Does.Contain("BlueSageJournalMoodPresentation.Label(feel)"));
+        });
+    }
+
+    // Round 5 R0: the Report can open from the QoL menu without the native Statistics tab ever opening, so the
+    // resolver must prime itself from the game's own cached singleton getter (never a scan, never an instantiate,
+    // never more than one probe per cooldown) and say why it failed, once, instead of silently showing plain labels.
+    [Test]
+    public void Journal_faces_resolver_primes_from_the_game_singleton_and_logs_the_reason_once()
+    {
+        string source = ReadRuntimeSource();
+        int start = source.IndexOf("internal static class BlueSageJournalMoodTextureResolver", StringComparison.Ordinal);
+        Assert.That(start, Is.GreaterThan(0));
+        string resolver = source.Substring(start);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(resolver, Does.Contain("MonoSingleton<StatisticManager>.I"));
+            Assert.That(resolver, Does.Contain("JournalMoodFaceResolutionPolicy.Describe("));
+            Assert.That(resolver, Does.Contain("_loggedReason"));
+            Assert.That(resolver, Does.Contain("_nextSingletonProbeAt"));
+            Assert.That(resolver, Does.Not.Contain("FindObjectsOfTypeAll"));
+            Assert.That(resolver, Does.Not.Contain("FindObjectOfType<"));
+        });
+    }
+
+    // Round 5 R (Blue: "game icons where able", "pomodoro/break icons also in"): achievement sprites are read inside
+    // the existing 12-per-frame batches and swapped once per refresh; pomodoro and break sprites come from the
+    // cached PomodoroController singleton with a probe cooldown; every icon cell is in layout units under the menu
+    // scale; nothing new reads on the hot path and nothing scans.
+    [Test]
+    public void Report_icons_are_read_once_per_refresh_from_the_games_own_sprites_and_scale_with_the_menu()
+    {
+        string source = ReadRuntimeSource();
+        int readStart = source.IndexOf("internal sealed class BlueSageAchievementReadSession", StringComparison.Ordinal);
+        int resolverStart = source.IndexOf("internal static class BlueSagePomodoroIconResolver", StringComparison.Ordinal);
+        Assert.That(readStart, Is.GreaterThan(0));
+        Assert.That(resolverStart, Is.GreaterThan(0));
+        string readSession = source.Substring(readStart, Math.Min(5000, source.Length - readStart));
+        string resolver = source.Substring(resolverStart);
+        Assert.Multiple(() =>
+        {
+            Assert.That(readSession, Does.Contain("GetProperty(\"AchievementContainer\""));
+            Assert.That(readSession, Does.Contain("GetField(\"AchievementInfos\""));
+            Assert.That(readSession, Does.Contain("GetField(\"AchievementSprite\""));
+            Assert.That(readSession, Does.Contain("TryReadSprite(value, key);"), "sprites ride inside the batched read");
+            Assert.That(source, Does.Contain("_achievementSprites = achievementRead.Sprites;"), "one swap per refresh");
+            Assert.That(source, Does.Contain("ReportIconPolicy.IsPomodoroMetric(WorkRelaxMetricCatalog.Get(key).Family)"), "enum compare on the draw path, no Enum.ToString per row per frame");
+            Assert.That(source, Does.Not.Contain(".Family.ToString()"));
+            Assert.That(source, Does.Contain("GUILayoutUtility.GetRect(IconCellSize, IconCellSize"), "icon cells in layout units, scaled by the menu scale");
+            Assert.That(source, Does.Contain("LockedIconAlpha"));
+            Assert.That(resolver, Does.Contain("MonoSingleton<PomodoroController>.I"));
+            Assert.That(resolver, Does.Contain("PomoSprite"));
+            Assert.That(resolver, Does.Contain("\"_breakBgSprite\""));
+            Assert.That(resolver, Does.Contain("_nextProbeAt"));
+            Assert.That(resolver, Does.Not.Contain("FindObjectsOfTypeAll"));
+            Assert.That(source.Substring(0, readStart), Does.Not.Contain("FindObjectsOfTypeAll"));
+        });
+    }
+
+    // Round 5 R0: Sprite.textureRect throws for tightly packed atlas sprites; one bad sprite must never abort the
+    // whole OnGUI pass, and a sprite that cannot be drawn leaves the plain label row in place.
+    [Test]
+    public void Journal_face_draw_is_guarded_against_tightly_packed_sprites()
+    {
+        string source = ReadRuntimeSource();
+        int start = source.IndexOf("private static bool TryDrawSprite(Sprite sprite, Rect target)", StringComparison.Ordinal);
+        Assert.That(start, Is.GreaterThan(0), "DrawSprite must become TryDrawSprite and report success");
+        string body = source.Substring(start, Math.Min(3200, source.Length - start));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(body, Does.Contain("try"));
+            Assert.That(body, Does.Contain("catch"));
+            // Blue's 0.2.6 answer: faces missing with no fallback sentence, so the draw itself was silent. The draw
+            // uses the sprite's uv bounds (valid for tight packing too), keeps textureRect only as the fallback, and
+            // writes one diagnostic line per session so the next log explains any face that still does not show.
+            Assert.That(body, Does.Contain("sprite.uv"));
+            Assert.That(body, Does.Contain("sprite.textureRect"));
+            Assert.That(body, Does.Contain("BlueSage Report sprite draw: "));
+            Assert.That(body, Does.Contain("EventType.Repaint"), "the diagnostic reads the real cell, never the Layout dummy rect");
+            Assert.That(body, Does.Contain("return false;"));
         });
     }
 
@@ -91,7 +172,7 @@ internal sealed class BlueSageReportSurfaceContractTests
         Assert.That(gate.TryEnable(new BlueSageReportAnchors(true, true, true, true, false, true), () => { }), Is.False);
         Assert.That(gate.TryEnable(new BlueSageReportAnchors(true, true, true, true, true, false), () => { }), Is.False);
         Assert.That(BlueSageReportSurfacePolicy.FailOpenDiagnostic,
-            Is.EqualTo("BlueSage Report disabled: exact native Report anchors are incomplete; native Report remains unchanged."));
+            Is.EqualTo("BlueSage Report is off for this game version; the game's Report still works. (Report screen parts not found.)"));
     }
 
     [Test]
@@ -114,7 +195,7 @@ internal sealed class BlueSageReportSurfaceContractTests
         Assert.That(registry.RestoreAll(), Is.EqualTo(1));
         Assert.That(native, Is.True);
         Assert.That(BlueSageReportSurfacePolicy.LifecycleFailOpenDiagnostic,
-            Is.EqualTo("BlueSage Report disabled: OpenStatisticsPanel lifecycle target is unavailable; native Report remains unchanged."));
+            Is.EqualTo("BlueSage Report is off for this game version; the game's Report still works. (OpenStatisticsPanel not found.)"));
     }
 
     [Test]

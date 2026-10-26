@@ -13,7 +13,7 @@ internal static class VoiceWelcomePolicy
         if (pushToTalk == true)
             return "Lobby voice is " + (lobbyVoiceOn == true ? "On" : "starting") + " and Push to Talk is enabled; hold your mic key to speak.";
         if (pushToTalk == false)
-            return "VOICE WARNING: lobby voice is " + (lobbyVoiceOn == true ? "On" : "starting") + " and Voice Activation is enabled, so your mic may be live. Check Settings > Audio or the mic icon.";
+            return "Heads up: your mic may be on (Voice Activation). Check Settings > Audio.";
         return "Voice mode is still loading. Check Settings > Audio for Push to Talk vs Voice Activation before assuming your mic is closed.";
     }
 }

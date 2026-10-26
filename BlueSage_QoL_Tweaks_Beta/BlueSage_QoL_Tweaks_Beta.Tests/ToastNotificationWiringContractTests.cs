@@ -39,11 +39,15 @@ public sealed class ToastNotificationWiringContractTests
             "Rebind cancelled for {cancelledLabel}.",
             "Rebind: {rejectionReason}",
             "{_pendingRebindLabel} is now bound to {candidate}.",
-            "BlueSage QoL swept unused assets.",
         };
 
         Assert.Multiple(() =>
         {
+            // Voice pass (2026-10-23): the cleanup-done line is a named constant ("BlueSage cleanup is done.").
+            int cleanupIndex = plugin.IndexOf("AddLocalNotification(SweepCompletedNotice);", StringComparison.Ordinal);
+            Assert.That(cleanupIndex, Is.GreaterThanOrEqualTo(0), "Missing AddLocalNotification for the cleanup-done line.");
+            Assert.That(plugin.Substring(Math.Max(0, cleanupIndex), Math.Min(200, plugin.Length - Math.Max(0, cleanupIndex))), Does.Contain("ShowToast(SweepCompletedNotice);"));
+
             foreach (string marker in markers)
             {
                 int addIndex = plugin.IndexOf("AddLocalNotification($\"" + marker + "\")", StringComparison.Ordinal);

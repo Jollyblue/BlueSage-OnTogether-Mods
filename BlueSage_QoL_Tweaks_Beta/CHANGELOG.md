@@ -2,6 +2,84 @@
 
 Every previous public release is kept below so the complete BlueSage history stays available on Thunderstore.
 
+## 0.2.7 — 2026-10-25
+
+What two long public hosts taught us: no more reconnect loops, the Report shows the game's own faces and badges, the stats file stops churning, the log says things once, and the automatic cleanup goes quiet. Plus one small thing: the `[U]` badge now tells you which QoL version a player runs.
+
+### Players
+- **New: local chat reaches farther on your screen.** The game only shows a local line when its sender is within 5 m. You now see lines from up to 15 m by default. Choose 5 to 25 m in the QoL menu (**Local chat range**); 5 is the game's own range. This only changes what you see: nothing is sent to anyone else, global chat is unchanged, and your ignore and mute lists still apply first. The speech bubble above the speaker's head follows the same range, so a line you can read always has its bubble.
+- **New: more of what you do answers with a toast.** Saving a setting in the QoL menu or Style Helper, applying your name or status, the WORK and RELAX buttons, hiding the stats bar, Report corrections, and chat commands that change something (like `/timestamps`, `/status`, `/rebind`) now show a small note, the same way the On/Off switches always did. Information commands such as `/qol status` stay in chat. Being made a Helper, or losing it, also gets a note. With Toast Pop-ups off, nothing pops up and the chat lines stay as they were.
+- **New: your extra outfit slots are easier to find.** Styles 4 to 9 sit below the game's three in the avatar screen's style list and start on. The first time you open that screen, one note points them out. The QoL menu switch is now called **Extra Outfit Slots 4-9**, and the in-game guide, README and tooltips say where they are and that your saved outfits wait for you if you turn them off.
+- **Fixed: toasts show again.** An earlier 0.2.7 test build drew none; they appear as they did in 0.2.6.
+- **New: hover `[U]` to see a player's QoL version**, like `QoL v0.2.7 User`. Players on 0.2.6 or older show as `Pre-indicator QoL User`, because those versions never said which one they were. The little `[U]` itself is unchanged, so narrow player lists look the same, and nothing about who can do what changed.
+
+### Reconnect
+- **Fixed: a lobby that is gone can no longer hold you in a reconnect loop.** When a host's game stays up but Steam drops its lobby, every careful rejoin used to get in, fall out, and start again. Reconnect Guard now gives up after 5 tries in a row on the same lobby, shows a short note, and leaves you on the menu. Two minutes of normal play after any rejoin, or joining a different lobby, gives it a fresh count.
+- **New: hosts hear when Steam drops the lobby.** One note the moment it happens: new players cannot join and host tools are locked until you re-host.
+
+### BlueSage Report
+- **Fixed: the Journal faces were missing when you opened the Report from the QoL menu.** They only showed after the game's own Statistics tab had been opened once. The Report now finds the faces itself, and if it ever cannot, the log says why.
+- **New: the game's own icons where they fit.** Each achievement shows its badge (dimmed until you unlock it), pomodoro rows carry the pomodoro icon, and the Work and Relax filters show the pomodoro and break icons. Everything scales with your BlueSage menu scale, so 1080p, 1440p and 4K read the same.
+
+### Work / Relax tracking
+- **Changed: history is saved the way you work, not minute by minute.** The whole file used to be rewritten every minute (about 5 MB a minute on a long host). Now one pomodoro is one row, one activity stretch is one row, the file saves every five minutes, and old days fold into daily rows while you play. Totals and the Report are unchanged; the first start after this update tidies the old minutes once, and the Report opens faster on a long history. If you go back to 0.2.6, it starts a fresh Work / Relax history; unzip `archive/<date>-pre-0.2.7-layout.zip` into BepInEx to bring the old one back.
+
+### Hosting
+- **Fixed: the host journal no longer fills up with the automatic 15-minute player-list check.** Over a long session those rows pushed real kicks, mutes and bans out of the box. The check still runs; it writes nothing unless something changed. Your own refresh button still records its row.
+
+### Smaller files on your PC
+- **New: one tidy folder.** Everything BlueSage writes now lives in `BepInEx/BlueSageQoLModSuite`: your trackers, the optional logs, and an `archive` of older files packed into zips you can open with a double-click. Files are named by date and time, and a short `README.txt` explains each part. The first start moves your old files in once (you get one small note), and a copy of the old folders waits in the archive for 14 days. Your game saves, settings files, avatar slots and chalkboards are never moved.
+- **Changed: older files tidy themselves.** Logs keep your last 3 sessions, 3 days or 24 MB, whichever comes first; older ones are zipped, and zips leave after 14 days or 48 MB. Whatever happens, the whole BlueSage folder never stays over 1 GB: the oldest files go first.
+- **Changed: the host journal stays under 1 MB.** It notes joins and leaves once every five minutes instead of on every change, and full pages go into the archive.
+- **Changed: Work / Relax history is less than half the size.** Each focus minute is stored once; Today, Week and Month are worked out from your totals. Past manual tweaks to your Today, Week or Month numbers no longer apply; the ones on your totals still do.
+- **Changed: the optional local chat and log copy (Local Audit Exports) is off unless you turn it on.** It is switched off once for everyone; turn it back on in the QoL menu or with `/auditlog on`.
+
+### Calmer log, same safety
+- **Three lines that repeated for hours in a busy lobby now appear once:** the player-matching wait (one line when it starts, one reminder an hour, one when it clears), the player-check state (a change has to last a minute before it is logged), and the 5-minute lobby refresh (only when something other than the player count changed). What the mod does is unchanged; only what it writes.
+- **New: one session summary line.** At quit and every six hours, `[BlueSageSession]` writes uptime, peak players and joins (hosts), cleanups run, the stats file's size and write count, journal rows, memory at start and now, and how many warnings and errors the mod logged. One line to paste when something feels off; no names, no ids.
+- **New: the cleanup line shows the game engine's own memory numbers** before and after each cleanup, so the next release can decide the automatic cleanup's future from numbers rather than guesses. A number this build cannot read shows `n/a`.
+- **Changed: the automatic cleanup no longer shows a toast every 40 minutes.** It was noise in a cozy session. The note is switched off once for everyone; turn **Sweep Chat Note** back on in the QoL menu if you liked it. A cleanup you start yourself still confirms.
+
+PlayerLimitLift is unchanged. Made with love by Blue + Sage = BlueSage ♥
+
+## 0.2.6 — 2026-10-20
+
+Round 4: your outfits stay yours, moderation hits the right player, hosts get a journal, and the autosave hitch is gone.
+
+### No more freeze when the game autosaves
+- **Fixed: the game froze for a moment every 3 minutes, when it autosaved.** 0.2.5's Work / Relax tracking wrote its whole history file, synced to disk, inside the game's own autosave. It now writes a copy a minute later on a background thread, and only the final save when you quit syncs to disk. Thank you to the player who reported it with a log.
+- **The history file stops growing on its own.** Idle time used to add rows at every autosave; same-day rows now merge and days older than two fold into daily totals, so the file stays small and BlueSage Report's totals are unchanged. The first start after this update may pause once while an old, large history file is tidied.
+- **Automatic Cleanup moved to every 40 minutes and waits for a quiet moment.** It never starts right before or after the game's 3-minute autosave or its 30-minute cleanup, so the two can't stack. If an earlier update had set you to 10 or 15 minutes, you're moved to 40 once; any other value you chose stays.
+
+### Avatar slots 4-9 keep your work
+- **Game outfit changes stay in the slot you're wearing.** Drinking a lemonade or closing the avatar panel while slot 4-9 is on now saves into that slot; vanilla slots 1-3 never change on their own.
+- **Your extra slots are stored crash-safe.** They live in their own file with three rotating backups; a crash or power loss mid-save can no longer empty them, and the game's save file is never touched.
+- **Rollback-friendly.** If you go back to 0.2.5, edit a slot and come forward again, the edited slots win; the previous slots are copied aside first.
+- **Honest when something is wrong.** If the slot file cannot be read, you get one in-game notice that slots are read-only this session, and nothing on disk is changed.
+
+### Moderation hits the exact player
+- **The game's own Ban buttons go through the host check.** The ID card's Ban, the player row's Ban and the report confirm all use BlueSage's live-row check when you host, so a player who rejoined through a reconnect mod is removed instead of a stale row. Refusals (protected victims, unclear rows, empty ids) say why; nothing is guessed.
+- **Reconnected players can be banned.** Rows that are in the game but missing from Steam's lobby list are labeled RECONNECTED and act normally.
+- **Loading players can be banned.** A player who is in Steam's lobby but has no live connection yet is banned without a kick and refused the moment their connection completes.
+- **Helpers keep working after an automatic reconnect.** A Helper who is in the game but no longer in Steam's lobby list used to be told to rejoin before acting. Now the request travels over the game connection; the host checks it against that Helper's live connection (and the Steam-authenticated ID when the game exposes it), acts or refuses it in the journal, and notes "issuer not in Steam list". The Helper gets no reply either way. On a host with an older BlueSage nothing is sent and the Helper is asked to rejoin, as before.
+- **Kick.** `/sidkick` (or the Host Tools row buttons): the player is removed through the game's own flow and the ban lifts itself once they have left, within 20 seconds. If they are still here at 20 seconds the ban stays and you are told. Helpers can kick through the host.
+- **Lobby-wide mute.** `/sidmute` stops the host relaying that player's chat to everyone for this hosting session (they will notice their own lines stop too); `/sidunmute` lifts it. Voice is unaffected.
+- **Opening a profile never fails closed.** The ID card and Steam profile open for every live row, with the trust level shown.
+
+### Hosts get a journal
+- **Host journal, always on while you host.** Every ban, unban, kick and mute (yours, a Helper's, or the game's own buttons) with who, what, whom, the RECONNECTED/LOADING label and the result, plus a status line when the lobby picture changes, in Host Tools and in `BepInEx/BlueSageAudit/host-journal/host-journal-v1.jsonl`. Guests write nothing.
+- **Built for big lobbies.** The journal box shows your actions first, one per line; a pinned line shows the lobby picture now; Status and Refused-only views are one click; hover a row for the Steam ID and reason, click to copy, or copy the last 20. A 100-slot lobby's joins and leaves never bury a ban.
+- **Automatic 15-minute refresh while hosting** relabels the player list from already-available state and notes it in the journal. It never moderates on its own.
+
+### Calmer logs and small comforts
+- **Deep sweep diagnostics removed.** The cleanup log is one short line again, and the sweep stays within the game's own cleanup timing.
+- **Fewer repeated warnings.** Identity-coverage and host-health lines are written when something changes, not on every tick.
+- **Compatibility heads-up.** If another Helper-like mod (TogetherPlus, Alpha) is loaded, one local note appears once per session after the welcome pop-up.
+- **Badge tooltips cost less every frame**; the Steam runtime check runs once a second instead of every frame.
+- `/bluedevdebug` is gone; typing it now only shows a local pointer to the menu's Local Audit snapshot.
+
+Updated QoL and PLL with love as Blue + Sage = BlueSage ♥
+
 ## 0.2.5 — 2026-10-18
 
 A big comfort update: new ways to open every tool, fishing help for sore hands, friendlier hosting, and a calmer, easier-to-read menu. Everything new can be switched off, and choices you already saved are never overwritten.

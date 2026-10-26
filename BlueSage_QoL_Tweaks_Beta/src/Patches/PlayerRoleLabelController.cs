@@ -12,6 +12,10 @@ internal static class PlayerRoleLabelController
     internal const string MemberDataKey =
         "bluesage_role_label_v1";
     private const float PublishIntervalSeconds = 2f;
+    // Round 5c: the version string never changes inside a lobby, so it is written on lobby entry and then only
+    // every 30 s (member-data writes are broadcast to every member; the 2 s cadence belongs to the heartbeat).
+    private const float VersionPublishIntervalSeconds = 30f;
+    private static float _nextVersionPublishAt;
 
     private static string _localHostLabelOverride =
         string.Empty;
@@ -54,7 +58,8 @@ internal static class PlayerRoleLabelController
         bool exactIdentityGenerationFresh =
             PlayerBadgeController.TryResolveFreshLocalCreatorContribution(
                 lobby,
-                out bool contributedBadgePresent);
+                out bool contributedBadgePresent,
+                out string freshnessReason);
         bool privateHostAuthorityFresh =
             TryResolveFreshPrivateHostAuthority();
         if (!CreatorHostLabelPublicationPolicy.CanPublish(
@@ -66,8 +71,21 @@ internal static class PlayerRoleLabelController
             StopAndClearPublishedHostLabel(
                 lobby,
                 out _);
+            // Round 5 C2 step 1: name the failing input so the refusal is diagnosable from the log.
             result =
-                "Host role label was not changed because fresh exact creator or approved private-fleet host authority is unavailable.";
+                "Host role label was not changed because fresh exact creator or approved private-fleet host authority is unavailable." +
+                " Exact-identity check: " +
+                (exactIdentityGenerationFresh ? "fresh" : (freshnessReason.Length > 0 ? freshnessReason : "not fresh")) +
+                "; creator badge: " +
+                (contributedBadgePresent ? "present" : "absent") +
+                "; private host authority: " +
+                (privateHostAuthorityFresh ? "ready" : "unavailable") +
+                // Round 5d (advisor): the two counters the per-row lock (round 5e) will be built from, so the first
+                // live refusal confirms or refutes the "earlier evidence generation" prediction with numbers.
+                "; companion generation " + PlayerBadgeController.CompanionEvidenceGenerationForDiagnostics +
+                "; authority generation " + PlayerBadgeController.AuthorityEvidenceGenerationForDiagnostics +
+                "; registry keyed to " + PlayerBadgeController.RegistryKeyForDiagnostics +
+                ".";
             return false;
         }
 
@@ -218,6 +236,10 @@ internal static class PlayerRoleLabelController
                     snapshot.Lobby,
                     CompatibleClientPresencePolicy.MemberDataKey,
                     string.Empty);
+                SteamMatchmaking.SetLobbyMemberData(
+                    snapshot.Lobby,
+                    CompatibleClientPresencePolicy.VersionMemberDataKey,
+                    string.Empty);
             }
             catch
             {
@@ -286,6 +308,7 @@ internal static class PlayerRoleLabelController
         {
             _compatibleLobbyKey = lobbyKey;
             _nextCompatiblePublishAt = 0f;
+            _nextVersionPublishAt = 0f;
         }
         if (Time.unscaledTime < _nextCompatiblePublishAt)
         {
@@ -303,6 +326,23 @@ internal static class PlayerRoleLabelController
 
         try
         {
+            // Round 5c: the version rides on its own key so older clients keep parsing the v1 heartbeat. It is
+            // written BEFORE the heartbeat (a peer polling between the two never sees a fresh heartbeat without a
+            // version) and only on lobby entry or every 30 s (the value never changes inside a lobby).
+            if (Time.unscaledTime >= _nextVersionPublishAt &&
+                CompatibleClientPresencePolicy.TryBuildVersionPayload(
+                    Plugin.PluginVersion,
+                    out string versionPayload))
+            {
+                SteamMatchmaking.SetLobbyMemberData(
+                    lobby,
+                    CompatibleClientPresencePolicy.VersionMemberDataKey,
+                    versionPayload);
+                _nextVersionPublishAt =
+                    Time.unscaledTime +
+                    VersionPublishIntervalSeconds;
+            }
+
             SteamMatchmaking.SetLobbyMemberData(
                 lobby,
                 CompatibleClientPresencePolicy.MemberDataKey,
@@ -331,6 +371,10 @@ internal static class PlayerRoleLabelController
                 SteamMatchmaking.SetLobbyMemberData(
                     lobby,
                     CompatibleClientPresencePolicy.MemberDataKey,
+                    string.Empty);
+                SteamMatchmaking.SetLobbyMemberData(
+                    lobby,
+                    CompatibleClientPresencePolicy.VersionMemberDataKey,
                     string.Empty);
             }
         }

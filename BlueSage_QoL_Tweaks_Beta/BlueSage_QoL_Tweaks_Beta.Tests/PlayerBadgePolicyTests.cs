@@ -34,7 +34,7 @@ public sealed class PlayerBadgePolicyTests
             }));
             Assert.That(result.TooltipText, Is.EqualTo(
                 "[O]  Owner / Host\n" +
-                "[U]  Compatible QoL User\n" +
+                "[U]  Pre-indicator QoL User\n" +
                 "[V] — Protected clone-incident victim\n" +
                 "[S] — Open clone-incident suspect\n" +
                 "[♪] — BlueSage creator identity"));
@@ -71,7 +71,7 @@ public sealed class PlayerBadgePolicyTests
         {
             Assert.That(result.DisplayText, Is.EqualTo("[O] [U] [♪] [+3]"));
             Assert.That(result.HiddenCount, Is.EqualTo(3));
-            Assert.That(result.TooltipText, Does.Contain("[U]  Compatible QoL User"));
+            Assert.That(result.TooltipText, Does.Contain("[U]  Pre-indicator QoL User"));
             Assert.That(result.TooltipText, Does.Contain("[♥] — BlueSage community supporter"));
             Assert.That(result.TooltipText, Does.Contain("[♪] — BlueSage creator identity"));
         });
@@ -142,7 +142,47 @@ public sealed class PlayerBadgePolicyTests
             Assert.That(result.DisplayText, Is.EqualTo("[M] [U]"));
             Assert.That(result.TooltipText, Is.EqualTo(
                 "[M] BlueSage Helper (this lobby)\n" +
-                "[U]  Compatible QoL User"));
+                "[U]  Pre-indicator QoL User"));
+        });
+    }
+
+    // Round 5c (Blue, 2026-10-23): the long badge text names the peer's own QoL version; the compact token
+    // stays [U] at every width so narrow rows are unchanged.
+    [Test]
+    public void Compatible_badge_names_the_peer_version_when_it_published_one()
+    {
+        PlayerBadgeEvidence versioned = AllTruth().With(compatibleClientVersion: "0.2.7");
+        PlayerBadgeEvidence presentationOnly = new PlayerBadgeEvidence(
+            uniqueExactRow: false,
+            uniqueCurrentMember: false,
+            ownerMatchesRow: false,
+            nativeHostAgreement: false,
+            moderationCapabilityFresh: false,
+            ownerListsRowAsHelper: false,
+            compatibleHeartbeatFresh: true,
+            cloneFeatureEnabled: false,
+            localSafetyAuthorized: false,
+            openVictim: false,
+            openSuspect: false,
+            creatorContributionFresh: false,
+            compatiblePresentationRow: true,
+            compatibleClientVersion: "1.0.0");
+
+        PlayerBadgePresentation wide = PlayerBadgePolicy.Compose(versioned, capacity: 6);
+        PlayerBadgePresentation narrow = PlayerBadgePolicy.Compose(versioned, capacity: 1);
+        PlayerBadgePresentation presentation = PlayerBadgePolicy.Compose(presentationOnly, capacity: 6);
+        PlayerBadgePresentation collapsed = PlayerBadgePolicy.Collapse(wide, capacity: 2);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(wide.TooltipText, Does.Contain("[U]  QoL v0.2.7 User"));
+            Assert.That(wide.TooltipText, Does.Not.Contain("Pre-indicator"));
+            Assert.That(wide.DisplayText, Does.Contain("[U]"));
+            Assert.That(narrow.DisplayText, Is.EqualTo("[U]"), "Compact token unchanged in narrow rows.");
+            Assert.That(narrow.TooltipText, Is.EqualTo(wide.TooltipText));
+            Assert.That(presentation.DisplayText, Is.EqualTo("[U]"));
+            Assert.That(presentation.TooltipText, Is.EqualTo("[U]  QoL v1.0.0 User"));
+            Assert.That(collapsed.TooltipText, Is.EqualTo(wide.TooltipText), "Collapse keeps the versioned tooltip.");
         });
     }
 

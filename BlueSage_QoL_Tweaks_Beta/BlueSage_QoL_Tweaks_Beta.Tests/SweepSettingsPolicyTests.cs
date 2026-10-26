@@ -18,33 +18,66 @@ public sealed class SweepSettingsPolicyTests
     }
 
     [Test]
-    public void DefaultIntervalMinutes_UsesBlues_fifteen_minute_cadence_for_fresh_installs()
+    public void DefaultIntervalMinutes_avoids_vanilla_overlap_and_still_sweeps_within_75_minutes()
     {
-        // 2026-10-17 (Blue): fresh installs clean up every 15 minutes, his live UAT setting.
-        Assert.That(SweepSettingsPolicy.DefaultIntervalMinutes, Is.EqualTo(15));
+        // Round 4 Stage G (Blue, 2026-10-20, after Marbles' autosave freeze): the default stays clear of the game's
+        // 30-minute cleanup and still adds a BlueSage sweep inside every 75 minutes. 15 was Blue's 2026-10-17 setting.
+        Assert.Multiple(() =>
+        {
+            Assert.That(SweepSettingsPolicy.DefaultIntervalMinutes, Is.EqualTo(40));
+            Assert.That(SweepSettingsPolicy.OverlapAvoidanceIntervalMinutes, Is.EqualTo(40));
+            Assert.That(SweepSettingsPolicy.DefaultIntervalMinutes, Is.LessThanOrEqualTo(75));
+            Assert.That(SweepSettingsPolicy.DefaultIntervalMinutes % 30, Is.Not.EqualTo(0), "must not share vanilla's 30-minute boundary");
+        });
     }
 
-    // Review 2026-10-17: fresh installs bound 15 and the old one-time safety migration rewrote it to
-    // 10. A fresh install (no config file when the plugin starts) keeps today's default; only real
-    // older configs go through the historical migrations.
+    // A fresh install (no config file when the plugin starts) keeps today's default; only real older configs go
+    // through the historical migrations.
     [Test]
-    public void Fresh_install_keeps_the_fifteen_minute_default()
+    public void Fresh_install_keeps_the_forty_minute_default()
     {
         Assert.That(
-            SweepSettingsPolicy.ResolveStartupIntervalMinutes(SweepSettingsPolicy.DefaultIntervalMinutes, freshInstall: true, legacyDefaultsMigrated: false, tenMinuteSafetyMigrated: false),
-            Is.EqualTo(15));
+            SweepSettingsPolicy.ResolveStartupIntervalMinutes(SweepSettingsPolicy.DefaultIntervalMinutes, freshInstall: true, legacyDefaultsMigrated: false, tenMinuteSafetyMigrated: false, overlapAvoidanceMigrated: false),
+            Is.EqualTo(40));
     }
 
     [Test]
-    public void Old_unmigrated_config_still_gets_the_historical_safety_migration()
+    public void Old_unmigrated_config_walks_every_historical_step_and_lands_on_forty()
     {
-        Assert.That(SweepSettingsPolicy.ResolveStartupIntervalMinutes(30, freshInstall: false, legacyDefaultsMigrated: false, tenMinuteSafetyMigrated: false), Is.EqualTo(10));
+        // 30 -> 15 (v1) -> 10 (v2 safety) -> 40 (v4 overlap avoidance).
+        Assert.That(SweepSettingsPolicy.ResolveStartupIntervalMinutes(30, freshInstall: false, legacyDefaultsMigrated: false, tenMinuteSafetyMigrated: false, overlapAvoidanceMigrated: false), Is.EqualTo(40));
+    }
+
+    [Test]
+    public void Config_already_through_the_overlap_migration_keeps_the_historical_result()
+    {
+        Assert.That(SweepSettingsPolicy.ResolveStartupIntervalMinutes(30, freshInstall: false, legacyDefaultsMigrated: false, tenMinuteSafetyMigrated: false, overlapAvoidanceMigrated: true), Is.EqualTo(10));
     }
 
     [Test]
     public void Migrated_config_keeps_the_players_choice()
     {
-        Assert.That(SweepSettingsPolicy.ResolveStartupIntervalMinutes(45, freshInstall: false, legacyDefaultsMigrated: true, tenMinuteSafetyMigrated: true), Is.EqualTo(45));
+        Assert.That(SweepSettingsPolicy.ResolveStartupIntervalMinutes(45, freshInstall: false, legacyDefaultsMigrated: true, tenMinuteSafetyMigrated: true, overlapAvoidanceMigrated: true), Is.EqualTo(45));
+    }
+
+    [TestCase(10)]
+    [TestCase(15)]
+    public void MigrateOverlapAvoidanceInterval_moves_the_two_migration_written_values_to_forty_once(int configured)
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(SweepSettingsPolicy.MigrateOverlapAvoidanceInterval(configured, alreadyMigrated: false), Is.EqualTo(40));
+            Assert.That(SweepSettingsPolicy.MigrateOverlapAvoidanceInterval(configured, alreadyMigrated: true), Is.EqualTo(configured), "a 10 or 15 chosen after the migration stays");
+        });
+    }
+
+    [TestCase(5)]
+    [TestCase(20)]
+    [TestCase(45)]
+    [TestCase(180)]
+    public void MigrateOverlapAvoidanceInterval_preserves_every_other_value(int configured)
+    {
+        Assert.That(SweepSettingsPolicy.MigrateOverlapAvoidanceInterval(configured, alreadyMigrated: false), Is.EqualTo(configured));
     }
 
     [Test]
@@ -157,6 +190,31 @@ public sealed class SweepSettingsPolicyTests
             Assert.That(SweepSettingsPolicy.MigrateAutomaticCleanupOptIn(false, alreadyMigrated: false), Is.False);
             Assert.That(SweepSettingsPolicy.MigrateAutomaticCleanupOptIn(false, alreadyMigrated: true), Is.False);
             Assert.That(SweepSettingsPolicy.MigrateAutomaticCleanupOptIn(true, alreadyMigrated: true), Is.True);
+        });
+    }
+
+    // Round 5 F: the automatic-sweep toast goes quiet once for existing installs; a later opt-in is kept.
+    [Test]
+    public void MigrateSweepNotification_QuietsOnceThenKeepsTheUsersChoice()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(SweepSettingsPolicy.MigrateSweepNotification(true, alreadyMigrated: false), Is.False, "existing 0.2.6 install goes quiet");
+            Assert.That(SweepSettingsPolicy.MigrateSweepNotification(false, alreadyMigrated: false), Is.False);
+            Assert.That(SweepSettingsPolicy.MigrateSweepNotification(true, alreadyMigrated: true), Is.True, "turned back on after the migration stays on");
+            Assert.That(SweepSettingsPolicy.MigrateSweepNotification(false, alreadyMigrated: true), Is.False);
+        });
+    }
+
+    [Test]
+    public void ShouldNotifyOnSweep_SilencesOnlyAutomaticSweeps()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(SweepSettingsPolicy.ShouldNotifyOnSweep(false, "automatic timer"), Is.False);
+            Assert.That(SweepSettingsPolicy.ShouldNotifyOnSweep(true, "automatic timer"), Is.True);
+            Assert.That(SweepSettingsPolicy.ShouldNotifyOnSweep(false, "manual hotkey"), Is.True, "a cleanup the user triggered always confirms");
+            Assert.That(SweepSettingsPolicy.ShouldNotifyOnSweep(false, "manual command"), Is.True);
         });
     }
 }

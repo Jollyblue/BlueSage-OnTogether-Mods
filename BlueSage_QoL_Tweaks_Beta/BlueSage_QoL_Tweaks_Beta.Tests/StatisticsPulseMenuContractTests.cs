@@ -97,7 +97,7 @@ public sealed class StatisticsPulseMenuContractTests
             Assert.That(source, Does.Not.Contain("Locked achievement hints"));
             Assert.That(source, Does.Not.Contain("Unlock by"));
             Assert.That(source, Does.Not.Contain("current beta").IgnoreCase);
-            Assert.That(source, Does.Contain("The full achievement gallery remains in the native Report."));
+            Assert.That(source, Does.Contain("The full achievement gallery is in the game's Report."));
         });
     }
 

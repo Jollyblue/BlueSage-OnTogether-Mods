@@ -50,14 +50,14 @@ internal static class WelcomeOverlayPolicy
     {
         string menuLine = HotkeyLabelPolicy.IsUnbound(qolMenuKeyName) ? "/qolmenu opens the QoL menu." : qolMenuKeyName + " opens the QoL menu.";
         string styleLine = HotkeyLabelPolicy.IsUnbound(styleKeyName) ? "/styleui opens Style Helper." : styleKeyName + " opens Style Helper.";
-        string flyLine = HotkeyLabelPolicy.IsUnbound(flyKeyName) ? "Noclip/fly has no hotkey yet (bind one with /rebind fly)." : flyKeyName + " toggles self-only noclip/fly.";
-        string sweepLine = HotkeyLabelPolicy.IsUnbound(sweepKeyName) ? "/sweep now runs a manual cleanup." : sweepKeyName + " runs a manual cleanup.";
+        string flyLine = HotkeyLabelPolicy.IsUnbound(flyKeyName) ? "Fly has no key yet; pick one with /rebind fly." : flyKeyName + " toggles fly, just for you.";
+        string sweepLine = HotkeyLabelPolicy.IsUnbound(sweepKeyName) ? "/sweep now runs a cleanup right away." : sweepKeyName + " runs a cleanup right away.";
 
         return "BlueSage QoL v" + version + " -- quick start:\n\n" +
                menuLine + " " + styleLine + "\n" +
                flyLine + " " + sweepLine + "\n\n" +
                "All four are rebindable right here, in the menu's Hotkeys section, or with /rebind.\n\n" +
                "Type / in chat to browse every command; Tab completes it.\n" +
-               "/qol status shows what's currently on. Full FAQ and feature list: README.";
+               "/qol status shows what's on. The README has the full FAQ and feature list.";
     }
 }

@@ -102,7 +102,8 @@ public sealed class EnhancedPlayerPanelLifecycleContractTests
             Assert.That(controller, Does.Contain("PlayerPanelSurfaceAction.Remove"));
             Assert.That(controller, Does.Contain("DestroyOwnedLane"));
             Assert.That(controller, Does.Contain("private void OnDestroy()"));
-            Assert.That(controller, Does.Contain("System.Threading.Interlocked"));
+            // Round 4 R9: the lane/button counters fed only the removed hidden diagnostics.
+            Assert.That(controller, Does.Not.Contain("System.Threading.Interlocked"));
             Assert.That(controller, Does.Not.Contain("Destroy(reportButton"));
             Assert.That(controller, Does.Not.Contain("Destroy(syncButton"));
             Assert.That(controller, Does.Not.Contain("Destroy(steamButton"));
@@ -127,18 +128,17 @@ public sealed class EnhancedPlayerPanelLifecycleContractTests
     }
 
     [Test]
-    public void Hierarchy_diagnostic_is_bounded_diagnostic_only_and_cannot_enable_fallback()
+    // Round 4 WS2 (Blue, 2026-10-19): the hidden hierarchy diagnostic went with /bluedevdebug. The unverified
+    // hierarchy fallback stays disabled exactly as before.
+    public void Hierarchy_diagnostic_is_removed_and_the_unverified_fallback_stays_disabled()
     {
         string controller = Read("src", "Patches", "PlayerPanelSurfaceController.cs");
         string policy = Read("src", "Core", "PlayerPanelSurfacePolicy.cs");
 
         Assert.Multiple(() =>
         {
-            Assert.That(controller, Does.Contain("HierarchyDiagnosticMaximumEntries"));
-            Assert.That(controller, Does.Contain("HierarchyDiagnosticRepeatSeconds"));
-            Assert.That(controller, Does.Contain("authority=diagnostic-only"));
-            Assert.That(controller, Does.Contain("fallbackEnabled=false"));
-            Assert.That(controller, Does.Contain("Plugin.ShouldEmitHiddenDiagnostics"));
+            Assert.That(controller, Does.Not.Contain("HierarchyDiagnostic"));
+            Assert.That(controller, Does.Not.Contain("ShouldEmitHiddenDiagnostics"));
             Assert.That(policy, Does.Contain("UnverifiedHierarchyFallbackEnabled = false"));
             Assert.That(policy, Does.Not.Contain("RuntimeHierarchyObserved &&"));
         });

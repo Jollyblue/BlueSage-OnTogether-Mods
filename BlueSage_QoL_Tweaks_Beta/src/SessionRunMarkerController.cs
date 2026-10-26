@@ -9,7 +9,6 @@ namespace BlueSage.QoLTweaks;
 
 internal sealed class SessionRunMarkerController : MonoBehaviour
 {
-    private const string MarkerFileName = "run-marker.v1";
     private static readonly object Sync = new object();
     private static SessionRunMarkerController _instance;
 
@@ -20,8 +19,9 @@ internal sealed class SessionRunMarkerController : MonoBehaviour
     private void Awake()
     {
         _instance = this;
-        _path = Path.Combine(SessionAuditController.AuditRoot, MarkerFileName);
-        Directory.CreateDirectory(SessionAuditController.AuditRoot);
+        // Round 5d: BlueSageQoLModSuite/trackers/session-run-marker.v1 (the old run-marker.v1 moves there once).
+        _path = ModSuitePaths.Current.RunMarkerPath;
+        Directory.CreateDirectory(Path.GetDirectoryName(_path));
 
         SessionRunClassification classification = ReadAndClassifyPrior();
         SessionAuditController.RecordRunMarker(

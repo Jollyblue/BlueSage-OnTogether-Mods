@@ -20,7 +20,7 @@ public sealed partial class ReleasePreservationContractTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(plugin, Does.Contain("public const string PluginVersion = \"0.2.5\""));
+            Assert.That(plugin, Does.Contain("public const string PluginVersion = \"0.2.7\""));
             Assert.That(plugin, Does.Contain("JoinByCode(targetLobbyCode, false)"));
             Assert.That(plugin, Does.Not.Contain("JoinByCode(_lastReconnectLobbyCode, true)"));
             Assert.That(plugin, Does.Contain("localUserIsMember"));
@@ -30,8 +30,10 @@ public sealed partial class ReleasePreservationContractTests
             Assert.That(chat, Does.Contain("OwnedBackdropOverlays"));
             Assert.That(chat, Does.Contain("blocksRaycasts = false"));
             Assert.That(panelPatch, Does.Contain("PlayerPanelSurfaceController.RefreshRow"));
-            Assert.That(panel, Does.Contain("\"_voiceMuteButton\""));
-            Assert.That(panel, Does.Contain("\"_syncButton\""));
+            // Round 4 R9: the unread reflection handles for the native sync/voice/steam buttons are removed; the
+            // report-button handle is the one the lane layout reads, and native controls stay game-owned by policy.
+            Assert.That(panel, Does.Not.Contain("\"_voiceMuteButton\""));
+            Assert.That(panel, Does.Not.Contain("\"_syncButton\""));
             Assert.That(panel, Does.Contain("\"_reportButton\""));
             Assert.That(panelPolicy, Does.Contain("Pomo and voice are game-owned state"));
             Assert.That(panelPolicy, Does.Contain("PreserveNativeControls = true"));
@@ -61,7 +63,7 @@ public sealed partial class ReleasePreservationContractTests
             Assert.That(plugin, Does.Contain("EnableSpoons = Config.Bind(\"Spoons\", \"EnableSpoons\", false"));
             Assert.That(plugin, Does.Contain("ResetChatUiToVanilla"));
             Assert.That(plugin, Does.Contain("PlayerRenderSaverController.RestoreAll()"));
-            Assert.That(menu, Does.Contain("Reset Chat UI to Vanilla"));
+            Assert.That(menu, Does.Contain("Reset Chat to the Game's Default"));
             Assert.That(menu, Does.Contain("Retained chat rows"));
         });
     }

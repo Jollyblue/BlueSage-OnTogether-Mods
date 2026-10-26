@@ -40,6 +40,10 @@ internal static class PlayerBadgeController
     private static readonly Dictionary<string, string>
         CompatibleClientPayloadsBySteamId =
             new Dictionary<string, string>(StringComparer.Ordinal);
+    // Round 5c: the peer's self-reported QoL version (presentation only), from its own member-data key.
+    private static readonly Dictionary<string, string>
+        CompatibleClientVersionsBySteamId =
+            new Dictionary<string, string>(StringComparer.Ordinal);
     private static readonly HashSet<string>
         CurrentLobbyMemberSteamIds =
             new HashSet<string>(StringComparer.Ordinal);
@@ -78,6 +82,9 @@ internal static class PlayerBadgeController
     private static long _evidenceGeneration;
     private static long _companionEvidenceGeneration;
     private static long _badgePresentationGeneration;
+    // Round 5e: the generation the extension registry is keyed to (0 = no key published). Written only by
+    // PublishRegistryKey and the lobby resets.
+    private static long _registryKeyGeneration;
     private static string _evidenceFingerprint =
         string.Empty;
     private static string _companionEvidenceFingerprint =
@@ -191,8 +198,14 @@ internal static class PlayerBadgeController
             RefreshCompatibleClientPresentationContext(lobby);
             RefreshSharedLobbyEvidence(lobby);
 
-            if (!BeginLobby((ulong)lobby) ||
-                !PlayerIdentityEvidenceController
+            if (!BeginLobby((ulong)lobby))
+            {
+                RefreshPresentationsWithoutCompleteRoster();
+                return;
+            }
+
+            ObserveCompanionContext((ulong)lobby);
+            if (!PlayerIdentityEvidenceController
                     .TryCaptureCompleteAuthorityEvidenceAndRowsCached(
                         (ulong)lobby,
                         out string fingerprint,
@@ -217,6 +230,8 @@ internal static class PlayerBadgeController
             Plugin.Log?.LogDebug(
                 "Player badge refresh failed closed: " +
                 ex.GetType().Name);
+            // Round 5e: a failed poll clears the companion key too, as the authority clear did before.
+            InvalidateCompanionEvidenceGeneration();
             InvalidateEvidenceGeneration();
             HideAllPresentations();
         }
@@ -229,7 +244,10 @@ internal static class PlayerBadgeController
         // independently from each exact cached Steam/PurrNet/native tuple.
         // This prevents one unrelated stale row from blanking the entire list
         // while every unresolved row still fails closed inside RefreshMarker.
+        // Round 5e: the companion context (Steam lobby members only) is refreshed here too, so the registry key
+        // follows it while the lobby-wide authority coverage is incomplete.
         InvalidateEvidenceGeneration();
+        ObserveCompanionContext(_lobbyKey);
         BeginReadOnlyBadgePresentationContext();
         PruneInactivePooledRows();
         foreach (BlueSagePlayerBadgeMarker marker in
@@ -321,6 +339,7 @@ internal static class PlayerBadgeController
         _evidenceGeneration = 0;
         _companionEvidenceGeneration = 0;
         _badgePresentationGeneration = 0;
+        _registryKeyGeneration = 0;
         _evidenceFingerprint = string.Empty;
         _companionEvidenceFingerprint = string.Empty;
         _selfLayoutDiagnosticFingerprint = string.Empty;
@@ -362,6 +381,7 @@ internal static class PlayerBadgeController
         }
 
         BlueSageExtensionRegistry.ClearLobbyState();
+        _registryKeyGeneration = 0;
         _lobbyKey = lobbyKey;
         if (_lobbyEpoch == long.MaxValue)
         {
@@ -414,6 +434,7 @@ internal static class PlayerBadgeController
         ClearSharedLobbyEvidence();
         _requestNonce = 0;
         BlueSageExtensionRegistry.ClearLobbyState();
+        _registryKeyGeneration = 0;
     }
 
     private static void RefreshCompatibleClientSnapshots(
@@ -539,6 +560,15 @@ internal static class PlayerBadgeController
             {
                 FreshCompatibleClientSteamIds.Add(steamId);
             }
+
+            string versionPayload = SteamMatchmaking.GetLobbyMemberData(
+                lobby,
+                member,
+                CompatibleClientPresencePolicy.VersionMemberDataKey) ?? string.Empty;
+            CompatibleClientVersionsBySteamId[steamId] =
+                CompatibleClientPresencePolicy.TryParseVersion(versionPayload, out string peerVersion)
+                    ? peerVersion
+                    : string.Empty;
         }
 
         _compatibleClientPresentationContextValid = true;
@@ -547,6 +577,7 @@ internal static class PlayerBadgeController
     private static void ClearCompatibleClientPresentationContext()
     {
         CompatibleClientPayloadsBySteamId.Clear();
+        CompatibleClientVersionsBySteamId.Clear();
         CurrentLobbyMemberSteamIds.Clear();
         FreshCompatibleClientSteamIds.Clear();
         _compatibleClientPresentationContextValid = false;
@@ -604,6 +635,29 @@ internal static class PlayerBadgeController
                !string.IsNullOrWhiteSpace(
                    _sharedLobbyEvidence.OwnerSteamId) &&
                (sharedEvidence = _sharedLobbyEvidence).Helpers != null;
+    }
+
+    // Round 5c: the peer's own reported version for the long badge text; empty for 0.2.3-0.2.7 peers.
+    private static string GetCompatibleClientVersion(
+        CSteamID lobby,
+        string steamId,
+        ulong exactSteamId)
+    {
+        if (_compatibleClientPresentationContextValid &&
+            CompatibleClientVersionsBySteamId.TryGetValue(
+                steamId,
+                out string cachedVersion))
+        {
+            return cachedVersion;
+        }
+
+        string payload = SteamMatchmaking.GetLobbyMemberData(
+            lobby,
+            new CSteamID(exactSteamId),
+            CompatibleClientPresencePolicy.VersionMemberDataKey) ?? string.Empty;
+        return CompatibleClientPresencePolicy.TryParseVersion(payload, out string peerVersion)
+            ? peerVersion
+            : string.Empty;
     }
 
     private static string GetCompatibleClientPayload(
@@ -733,7 +787,11 @@ internal static class PlayerBadgeController
                 openVictim: false,
                 openSuspect: false,
                 creatorContributionFresh: false,
-                compatiblePresentationRow: true);
+                compatiblePresentationRow: true,
+                compatibleClientVersion: GetCompatibleClientVersion(
+                    lobby,
+                    marker.BoundSteamId,
+                    rowSteamId));
             return true;
         }
 
@@ -839,7 +897,14 @@ internal static class PlayerBadgeController
             supporterIdentityHashMatched:
                 SupporterBadgeIdentityPolicy.IsRecognizedExactIdentity(marker.BoundSteamId),
             ownerPublishedCreatorHostLabelFresh:
-                ownerPublishedCreatorHostLabelFresh);
+                ownerPublishedCreatorHostLabelFresh,
+            compatibleClientVersion:
+                compatibleFresh
+                    ? GetCompatibleClientVersion(
+                        lobby,
+                        marker.BoundSteamId,
+                        rowSteamId)
+                    : string.Empty);
         return true;
     }
 
@@ -847,8 +912,8 @@ internal static class PlayerBadgeController
         ulong rowSteamId,
         PlayerIdentityEvidence identity)
     {
-        long badgeGeneration = _evidenceContextValid
-            ? _evidenceGeneration
+        long badgeGeneration = _registryKeyGeneration > 0
+            ? _registryKeyGeneration
             : _badgePresentationGeneration;
         if (_lobbyEpoch <= 0 ||
             badgeGeneration <= 0 ||
@@ -886,11 +951,24 @@ internal static class PlayerBadgeController
                response.ContributedBadgePresent;
     }
 
+    // Round 5d: read-only, for the host role label refusal line only.
+    internal static long CompanionEvidenceGenerationForDiagnostics => _companionEvidenceGeneration;
+    internal static long AuthorityEvidenceGenerationForDiagnostics => _evidenceGeneration;
+    internal static string RegistryKeyForDiagnostics =>
+        HostAuthorityRegistryKeyPolicy.KeyName(HostAuthorityRegistryKeyPolicy.LockedPerRowHostAuthority) +
+        " generation " + _registryKeyGeneration;
+
     private static void BeginReadOnlyBadgePresentationContext()
     {
         if (_lobbyEpoch <= 0)
         {
             _badgePresentationGeneration = 0;
+            return;
+        }
+
+        // Round 5e: a published registry key already answers badge reads; the read-only context never overrides it.
+        if (_registryKeyGeneration > 0)
+        {
             return;
         }
 
@@ -906,24 +984,54 @@ internal static class PlayerBadgeController
         CSteamID expectedLobby,
         out bool contributedBadgePresent)
     {
+        return TryResolveFreshLocalCreatorContribution(
+            expectedLobby,
+            out contributedBadgePresent,
+            out _);
+    }
+
+    // Round 5 C2 step 1: same predicates, same order, but the first one that fails is named so the host role
+    // label refusal (and the next live log) says which coupling made the host's own truth look stale.
+    internal static bool TryResolveFreshLocalCreatorContribution(
+        CSteamID expectedLobby,
+        out bool contributedBadgePresent,
+        out string reason)
+    {
         contributedBadgePresent = false;
+        reason = string.Empty;
         if (!SteamManager.Initialized ||
             expectedLobby == CSteamID.Nil)
         {
+            reason = "Steam is not initialized or no lobby is active";
             return false;
         }
 
         CSteamID localSteamId = SteamUser.GetSteamID();
-        if (localSteamId == CSteamID.Nil ||
-            !TryResolveFreshIdentityTruthBySteam(
-                (ulong)localSteamId,
-                out BlueSageIdentityTruthSnapshotV1 truth,
-                out _) ||
-            _lobbyKey != (ulong)expectedLobby ||
-            truth.SteamId != (ulong)localSteamId ||
-            truth.PurrNetId == 0UL ||
-            truth.LobbyEpoch != _lobbyEpoch ||
-            truth.EvidenceGeneration != _evidenceGeneration)
+        if (localSteamId == CSteamID.Nil)
+        {
+            reason = "the local Steam identity is unavailable";
+            return false;
+        }
+
+        bool truthResolved = TryResolveFreshIdentityTruthBySteam(
+            (ulong)localSteamId,
+            out BlueSageIdentityTruthSnapshotV1 truth,
+            out string truthError);
+        long nowTicks = DateTime.UtcNow.Ticks;
+        reason = CreatorContributionFreshnessPolicy.Describe(
+            truthResolved,
+            truthError,
+            lobbyKeyMatches: _lobbyKey == (ulong)expectedLobby,
+            steamIdMatches: truth.SteamId == (ulong)localSteamId,
+            purrNetKnown: truth.PurrNetId != 0UL,
+            epochCurrent: truth.LobbyEpoch == _lobbyEpoch,
+            generationCurrent: truth.EvidenceGeneration ==
+                HostAuthorityRegistryKeyPolicy.FreshnessGeneration(
+                    HostAuthorityRegistryKeyPolicy.LockedPerRowHostAuthority,
+                    _companionEvidenceGeneration,
+                    _evidenceGeneration),
+            stillFresh: truth.FreshUntilUtcTicks >= nowTicks);
+        if (reason.Length > 0)
         {
             return false;
         }
@@ -936,11 +1044,6 @@ internal static class PlayerBadgeController
                 ref _requestNonce,
                 1);
             nonce = 1;
-        }
-        long nowTicks = DateTime.UtcNow.Ticks;
-        if (truth.FreshUntilUtcTicks < nowTicks)
-        {
-            return false;
         }
 
         var request =
@@ -956,6 +1059,7 @@ internal static class PlayerBadgeController
                 nowTicks,
                 out BlueSageBadgeContributionResponseV1 response))
         {
+            reason = "the companion badge contribution read did not answer";
             return false;
         }
 
@@ -1198,6 +1302,7 @@ internal static class PlayerBadgeController
             if (!requiresEpochAdvance || !TryAdvanceEvidenceEpoch())
             {
                 _companionEvidenceContextValid = false;
+                PublishRegistryKey();
                 return false;
             }
 
@@ -1214,6 +1319,7 @@ internal static class PlayerBadgeController
                     out _))
             {
                 _companionEvidenceContextValid = false;
+                PublishRegistryKey();
                 return false;
             }
         }
@@ -1221,7 +1327,54 @@ internal static class PlayerBadgeController
         _companionEvidenceFingerprint = nextFingerprint;
         _companionEvidenceGeneration = nextGeneration;
         _companionEvidenceContextValid = nextValid;
+        PublishRegistryKey();
         return _companionEvidenceContextValid;
+    }
+
+    // Round 5e: refresh the companion context (Steam lobby members only) on every poll, complete roster or not.
+    private static void ObserveCompanionContext(ulong lobbyKey)
+    {
+        if (lobbyKey != 0UL &&
+            PlayerIdentityEvidenceController
+                .TryCaptureCompanionIdentityContextCached(
+                    lobbyKey,
+                    out _,
+                    out string companionFingerprint,
+                    out _,
+                    out _))
+        {
+            RefreshCompanionEvidenceGeneration(companionFingerprint);
+            return;
+        }
+
+        InvalidateCompanionEvidenceGeneration();
+    }
+
+    // Round 5e: the one writer of the extension registry's host/badge key. Unlocked, the key follows the companion
+    // generation; locked (rescue lane), it follows the lobby-wide authority generation exactly like 0.2.6. With no
+    // key, a previously published one is cleared; the read-only badge presentation context is left to its owner.
+    private static void PublishRegistryKey()
+    {
+        long generation = HostAuthorityRegistryKeyPolicy.RegistryGeneration(
+            HostAuthorityRegistryKeyPolicy.LockedPerRowHostAuthority,
+            _companionEvidenceContextValid,
+            _companionEvidenceGeneration,
+            _evidenceContextValid,
+            _evidenceGeneration);
+        if (_lobbyEpoch > 0 && generation > 0)
+        {
+            _registryKeyGeneration = generation;
+            BlueSageExtensionRegistry.BeginLobby(
+                _lobbyEpoch,
+                generation);
+            return;
+        }
+
+        if (_registryKeyGeneration > 0)
+        {
+            _registryKeyGeneration = 0;
+            BlueSageExtensionRegistry.ClearLobbyState();
+        }
     }
 
     private static bool ObserveEvidenceGeneration(
@@ -1244,7 +1397,7 @@ internal static class PlayerBadgeController
                 !TryAdvanceEvidenceEpoch())
             {
                 _evidenceContextValid = false;
-                BlueSageExtensionRegistry.ClearLobbyState();
+                PublishRegistryKey();
                 return false;
             }
 
@@ -1261,7 +1414,7 @@ internal static class PlayerBadgeController
                     out _))
             {
                 _evidenceContextValid = false;
-                BlueSageExtensionRegistry.ClearLobbyState();
+                PublishRegistryKey();
                 return false;
             }
         }
@@ -1269,16 +1422,8 @@ internal static class PlayerBadgeController
         _evidenceFingerprint = nextFingerprint;
         _evidenceGeneration = nextGeneration;
         _evidenceContextValid = nextValid;
-        if (!_evidenceContextValid)
-        {
-            BlueSageExtensionRegistry.ClearLobbyState();
-            return false;
-        }
-
-        BlueSageExtensionRegistry.BeginLobby(
-            _lobbyEpoch,
-            _evidenceGeneration);
-        return true;
+        PublishRegistryKey();
+        return _evidenceContextValid;
     }
 
     private static bool TryAdvanceEvidenceEpoch()
@@ -1300,6 +1445,7 @@ internal static class PlayerBadgeController
         ClearCompatibleClientSnapshots();
         ClearCompatibleClientPresentationContext();
         BlueSageExtensionRegistry.ClearLobbyState();
+        _registryKeyGeneration = 0;
         return true;
     }
 

@@ -99,12 +99,22 @@ public sealed class NativeAssetSweepRuntimeContractTests
             Assert.That(plugin, Does.Contain("sweepMethod.Invoke(manager, null) as IEnumerator"));
             Assert.That(plugin, Does.Not.Contain("sweepUi.SetActive("));
             Assert.That(nativeCoordinationRead, Does.Not.Contain("SetValue("));
-            Assert.That(plugin, Does.Contain("NotifyOnSweep = Config.Bind(\"Asset Sweep\", \"NotifyOnSweep\", true,"));
+            Assert.That(plugin, Does.Contain("NotifyOnSweep = Config.Bind(\"Asset Sweep\", \"NotifyOnSweep\", false,"));
             Assert.That(plugin, Does.Contain("ForceManagedGcCollect = Config.Bind(\"Asset Sweep\", \"ForceManagedGcCollect\", false,"));
             Assert.That(completion, Does.Contain("if (ForceManagedGcCollect.Value)"));
             Assert.That(completion, Does.Contain("GC.Collect();"));
-            Assert.That(completion, Does.Contain("if (NotifyOnSweep.Value)"));
-            Assert.That(completion, Does.Contain("AddLocalNotification(\"BlueSage QoL swept unused assets.\");"));
+            Assert.That(completion, Does.Contain("if (SweepSettingsPolicy.ShouldNotifyOnSweep(NotifyOnSweep.Value, reason))"));
+            Assert.That(completion, Does.Contain("AddLocalNotification(SweepCompletedNotice);"));
+            // Voice pass NOISE 5: a manual cleanup that fails mid-run answers; the automatic timer stays quiet.
+            string runFailure = Slice(completion, "operation = Resources.UnloadUnusedAssets();", "if (operation != null)");
+            Assert.That(runFailure, Does.Contain("if (SweepMenuActionPolicy.ShouldAnnounceRunFailure(reason))"));
+            Assert.That(runFailure, Does.Contain("AddLocalNotificationWithToast(ManualSweepRunFailedNotice);"));
+            Assert.That(runFailure.IndexOf("FinishSweepOperation(sequence, reason);", StringComparison.Ordinal), Is.LessThan(runFailure.IndexOf("ManualSweepRunFailedNotice", StringComparison.Ordinal)), "The gate frees first, so a retry can start.");
+            // The menu and /sweep answer with the specific refusal RunSweep gave.
+            Assert.That(plugin, Does.Contain("return SweepMenuActionPolicy.BuildCompletionMessage(started, _lastManualSweepRefusalNotice);"));
+            Assert.That(plugin, Does.Contain("_lastManualSweepRefusalNotice = ManualSweepPausedNotice;"));
+            Assert.That(plugin, Does.Contain("_lastManualSweepRefusalNotice = ManualSweepBusyNotice;"));
+            Assert.That(plugin, Does.Contain("_lastManualSweepRefusalNotice = ManualSweepFailedNotice;"));
             Assert.That(plugin, Does.Contain("if (Input.GetKeyDown(ManualSweepKey.Value))"));
             Assert.That(plugin, Does.Contain("RunSweep(\"QoL menu\", requireManualPermission: true)"));
             Assert.That(plugin, Does.Contain("RunSweep(\"manual command\", requireManualPermission: true)"));

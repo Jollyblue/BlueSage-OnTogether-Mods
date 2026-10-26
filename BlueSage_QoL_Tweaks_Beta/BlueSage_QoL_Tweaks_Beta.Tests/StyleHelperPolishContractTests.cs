@@ -13,8 +13,8 @@ public sealed class StyleHelperPolishContractTests
         Assert.That(source, Does.Contain("GUILayout.BeginVertical(_boxStyle, GUILayout.ExpandHeight(false));"));
         Assert.That(source, Does.Contain("stretchHeight = false"));
         Assert.That(source, Does.Contain("richText = false, fontSize = 15"));
-        Assert.That(source, Does.Contain("including nested <b>, <rotate>, and <size>"));
-        Assert.That(source, Does.Contain("Detected rich-text tags stay visible and editable here"));
+        Assert.That(source, Does.Contain("even nested ones like <b>, <rotate> and <size>"));
+        Assert.That(source, Does.Contain("Style codes already in your name stay visible and editable here"));
     }
     private static string ProjectRoot
     {

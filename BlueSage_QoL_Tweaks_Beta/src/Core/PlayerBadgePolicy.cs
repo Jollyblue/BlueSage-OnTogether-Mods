@@ -34,7 +34,8 @@ internal readonly struct PlayerBadgeEvidence
         bool creatorContributionFresh,
         bool supporterIdentityHashMatched = false,
         bool ownerPublishedCreatorHostLabelFresh = false,
-        bool compatiblePresentationRow = false)
+        bool compatiblePresentationRow = false,
+        string compatibleClientVersion = null)
     {
         UniqueExactRow = uniqueExactRow;
         UniqueCurrentMember = uniqueCurrentMember;
@@ -51,6 +52,7 @@ internal readonly struct PlayerBadgeEvidence
         SupporterIdentityHashMatched = supporterIdentityHashMatched;
         OwnerPublishedCreatorHostLabelFresh = ownerPublishedCreatorHostLabelFresh;
         CompatiblePresentationRow = compatiblePresentationRow;
+        CompatibleClientVersion = compatibleClientVersion ?? string.Empty;
     }
 
     internal bool UniqueExactRow { get; }
@@ -71,6 +73,8 @@ internal readonly struct PlayerBadgeEvidence
     // remain visible for a currently bound native row while unrelated roster
     // drift keeps identity-sensitive actions fail-closed.
     internal bool CompatiblePresentationRow { get; }
+    // Round 5c: the peer's self-reported QoL version (presentation only; empty for 0.2.7 and older peers).
+    internal string CompatibleClientVersion { get; }
 
     internal PlayerBadgeEvidence With(
         bool? uniqueExactRow = null,
@@ -87,7 +91,8 @@ internal readonly struct PlayerBadgeEvidence
         bool? creatorContributionFresh = null,
         bool? supporterIdentityHashMatched = null,
         bool? ownerPublishedCreatorHostLabelFresh = null,
-        bool? compatiblePresentationRow = null)
+        bool? compatiblePresentationRow = null,
+        string compatibleClientVersion = null)
     {
         return new PlayerBadgeEvidence(
             uniqueExactRow ?? UniqueExactRow,
@@ -104,7 +109,8 @@ internal readonly struct PlayerBadgeEvidence
             creatorContributionFresh ?? CreatorContributionFresh,
             supporterIdentityHashMatched ?? SupporterIdentityHashMatched,
             ownerPublishedCreatorHostLabelFresh ?? OwnerPublishedCreatorHostLabelFresh,
-            compatiblePresentationRow ?? CompatiblePresentationRow);
+            compatiblePresentationRow ?? CompatiblePresentationRow,
+            compatibleClientVersion ?? CompatibleClientVersion);
     }
 }
 
@@ -212,7 +218,9 @@ internal static class PlayerBadgePolicy
 
         string tooltip = string.Join(
             "\n",
-            badges.Select(Describe));
+            badges.Select(kind => kind == PlayerBadgeKind.CompatibleClient
+                ? DescribeCompatibleClient(evidence.CompatibleClientVersion)
+                : Describe(kind)));
         return BuildPresentation(
             badges,
             tooltip,
@@ -343,6 +351,13 @@ internal static class PlayerBadgePolicy
         }
     }
 
+    // Round 5c (ships as 0.2.7): "[U]  QoL v0.2.7 User" from the peer's own reported version; "[U]  Pre-indicator QoL User"
+    // when the peer publishes the v1 heartbeat but no version key (0.2.3-0.2.6).
+    private static string DescribeCompatibleClient(string peerVersion)
+    {
+        return "[U]  " + CompatibleClientPresencePolicy.LongLabel(peerVersion);
+    }
+
     private static string Describe(PlayerBadgeKind badge)
     {
         switch (badge)
@@ -352,7 +367,7 @@ internal static class PlayerBadgePolicy
             case PlayerBadgeKind.Helper:
                 return "[M] BlueSage Helper (this lobby)";
             case PlayerBadgeKind.CompatibleClient:
-                return "[U]  Compatible QoL User";
+                return DescribeCompatibleClient(string.Empty);
             case PlayerBadgeKind.ProtectedVictim:
                 return "[V] — Protected clone-incident victim";
             case PlayerBadgeKind.Suspect:

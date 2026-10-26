@@ -14,7 +14,7 @@ internal static class NavigationCalloutPolicy
         return "BlueSage QoL v" + SanitizeVersion(version) + ": " +
                Highlight(KeyOrCommandKeyword(menuKeyName, "/qolmenu"), NotificationKeywordHex) + " opens QoL Menu. " +
                Highlight(KeyOrCommandKeyword(styleKeyName, "/styleui"), NotificationKeywordHex) + " opens Style Helper for names, status, Spoons, colors, and templates. " +
-               "Hotkeys rebindable in the menu's Hotkeys section or /rebind. /bsqol opens the friendly guide; full README: " +
+               "Change any key in the menu's Hotkeys section or with /rebind. /bsqol opens the friendly guide; the full README is here: " +
                HeaderActionLayoutPolicy.ThunderstoreUrl + " . /qol status shows what is on.";
     }
 

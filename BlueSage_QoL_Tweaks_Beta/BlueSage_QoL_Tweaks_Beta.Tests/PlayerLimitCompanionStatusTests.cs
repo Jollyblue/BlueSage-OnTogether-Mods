@@ -60,7 +60,8 @@ public sealed class PlayerLimitCompanionStatusTests
 
         string plugin = File.ReadAllText(Path.Combine(root, "src", "Plugin.cs"));
 
-        Assert.That(plugin.Split(new[] { "CapturePlayerLimitCompanionStatusWithLobby();" }, System.StringSplitOptions.None).Length - 1, Is.EqualTo(3));
+        // Round 4 WS2: the third caller was the removed hidden diagnostic snapshot; Host Health and Host Tools remain.
+        Assert.That(plugin.Split(new[] { "CapturePlayerLimitCompanionStatusWithLobby();" }, System.StringSplitOptions.None).Length - 1, Is.EqualTo(2));
     }
 
     [Test]

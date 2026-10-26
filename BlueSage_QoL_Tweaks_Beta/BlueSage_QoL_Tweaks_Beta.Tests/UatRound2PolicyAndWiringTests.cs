@@ -46,14 +46,18 @@ public sealed class UatRound2PolicyAndWiringTests
     }
 
     [Test]
-    public void Qol_menu_hotkey_toasts_like_Style_Helper()
+    public void Qol_menu_hotkey_opens_the_menu_without_a_toast()
     {
         string plugin = ReadSource("Plugin.cs");
         string toggle = Slice(plugin, "_qolMenuWindow.ToggleVisible();", "private void ToggleStyleUiFromHotkey()");
 
         Assert.Multiple(() =>
         {
-            Assert.That(toggle, Does.Contain("ShowToast(_qolMenuWindow.IsVisible ? \"QoL menu opened.\" : \"QoL menu closed.\");"));
+            // Voice pass (2026-10-23) NOISE 4: the visible menu is the answer; the opened/closed toast was noise.
+            Assert.That(toggle, Is.Not.Empty);
+            Assert.That(toggle, Does.Not.Contain("ShowToast("));
+            Assert.That(plugin, Does.Not.Contain("\"QoL menu opened.\""));
+            Assert.That(plugin, Does.Not.Contain("\"QoL menu closed.\""));
             Assert.That(ReadSource("QolMenuWindow.cs"), Does.Contain("internal bool IsVisible => _visible;"));
         });
     }
@@ -62,7 +66,7 @@ public sealed class UatRound2PolicyAndWiringTests
     public void Welcome_detection_uses_the_Steam_lobby_and_game_scene()
     {
         string plugin = ReadSource("Plugin.cs");
-        string detect = Slice(plugin, "private static bool TryGetCurrentLobbyKeyForWelcomeMessage(out string lobbyKey)", "private bool ShowWelcomeMessageForLobby()");
+        string detect = Slice(plugin, "private static bool TryGetCurrentLobbyKeyForWelcomeMessage(out string lobbyKey)", "private bool ShowWelcomeMessageForLobby(bool quietReconnectVisit)");
 
         Assert.Multiple(() =>
         {

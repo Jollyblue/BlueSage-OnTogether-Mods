@@ -196,6 +196,36 @@ public sealed class WorkRelaxLedgerStoreContractTests
         }
     }
 
+    // Round 5d full review (critical): in BlueSageQoLModSuite/trackers the file is "work-relax-p_<id>.json"; Save used
+    // to compare the file name with the profile key and refused every save, so history was lost on quit.
+    [Test]
+    public void Save_and_load_work_in_the_new_folder_with_the_work_relax_file_prefix()
+    {
+        string directory = CreateTemporaryDirectory();
+        try
+        {
+            const string profileKey = "p_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+            var store = WorkRelaxLedgerStore.ForLedgerDirectory(directory, profileKey, ModSuiteLayoutPolicy.WorkRelaxFilePrefix);
+            store.Save(new WorkRelaxLedger { SchemaVersion = 1, ProfileKey = profileKey, LastMode = "Work" });
+            store.Save(new WorkRelaxLedger { SchemaVersion = 1, ProfileKey = profileKey, LastMode = "Relax" });
+
+            string path = Path.Combine(directory, "work-relax-" + profileKey + ".json");
+            WorkRelaxLedgerLoadResult loaded = WorkRelaxLedgerStore.ForLedgerDirectory(directory, profileKey, ModSuiteLayoutPolicy.WorkRelaxFilePrefix).Load();
+            Assert.Multiple(() =>
+            {
+                Assert.That(File.Exists(path), "Saved under the prefixed name.");
+                Assert.That(File.Exists(path + ".bak"));
+                Assert.That(loaded.Ledger?.LastMode, Is.EqualTo("Relax"), "What was saved loads back.");
+                Assert.That(() => store.Save(new WorkRelaxLedger { SchemaVersion = 1, ProfileKey = "p_" + new string('d', 64) }),
+                    Throws.InvalidOperationException, "Another profile's ledger is still refused.");
+            });
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static string CreateTemporaryDirectory()
     {
         string directory = Path.Combine(Path.GetTempPath(), "BlueSageWorkRelaxTests", Guid.NewGuid().ToString("N"));

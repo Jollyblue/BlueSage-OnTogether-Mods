@@ -46,18 +46,28 @@ internal static class ChalkboardPersistenceController
     {
         if (ChalkyInstalled)
         {
-            return "Chalkboard Persistence: Andrew's Chalky is installed, so BlueSage is safely standing down.";
+            return "Chalkboards: Chalky is installed, so BlueSage's chalkboard tools stay off to avoid clashing with it.";
         }
 
-        return "Chalkboard Persistence: " + (Available ? "on." : "off.") +
-               " Catalog=0 River/Stage, 1 Classroom board A (face A), 2 Classroom board B (face B); index 3 is unsupported. " +
-               "Local view/save/delete/map refresh are available to every QoL user. Shared load/clear require Host-direct or authenticated Helper-to-Host authority, a fresh /chalk boards map, and exact current identity. " +
-               "Compatible clients receive full-state replacement; vanilla observer state remains not-observed until live UAT. " +
-               "There is no authoritative drawing-owner identity. rollback=" +
-               (_rollbackUnresolved || ChalkboardSnapshotTransportController.DestructiveActionsBlocked
-                   ? ChalkboardSnapshotTransportController.RollbackState
-                   : "ready") +
-               ".";
+        bool undoBlocked = _rollbackUnresolved || ChalkboardSnapshotTransportController.DestructiveActionsBlocked;
+        if (undoBlocked)
+        {
+            Plugin.Log?.LogInfo(
+                "[BlueSageChalk] status: rollback=" + ChalkboardSnapshotTransportController.RollbackState +
+                "; there is no authoritative drawing-owner identity.");
+        }
+        return "Chalkboards: " + (Available ? "on." : "off.") +
+               " Boards 0 (Stage), 1 and 2 (Classroom) can be saved and viewed by anyone with QoL; the host or a Helper can load or clear them. " +
+               (undoBlocked
+                   ? "Undo: stuck, so load and clear stay paused until the boards reload or the game restarts."
+                   : "Undo: ready.");
+    }
+
+    // Player text stays short; the full technical receipt goes to the log only.
+    private static string WithLoggedDetail(string playerMessage, string detail)
+    {
+        Plugin.Log?.LogInfo("[BlueSageChalk] " + detail);
+        return playerMessage;
     }
 
     internal static string Save(string name, string boardToken)
@@ -114,19 +124,20 @@ internal static class ChalkboardPersistenceController
                 File.Move(temp, target);
             }
 
-            message = $"Chalkboard '{normalized}' saved locally from board {index}. " +
-                      ChalkboardModerationController.BuildTruth(
-                          "save",
-                          index,
-                          DescribeBoardScene(board, index),
-                          normalized,
-                          "not-needed");
+            message = WithLoggedDetail(
+                $"Saved board {index} as '{normalized}' on this computer.",
+                ChalkboardModerationController.BuildTruth(
+                    "save",
+                    index,
+                    DescribeBoardScene(board, index),
+                    normalized,
+                    "not-needed"));
             return true;
         }
         catch (Exception ex)
         {
             Plugin.Log?.LogWarning($"Chalkboard save failed safely: {ex.GetType().Name}: {ex.Message}");
-            message = "Chalkboard save failed safely; the existing save was left intact.";
+            message = "The board couldn't be saved. Your older save is still there.";
             return false;
         }
     }
@@ -173,7 +184,7 @@ internal static class ChalkboardPersistenceController
 
         if (!Plugin.TryGetRescueLobby(out CSteamID lobby) || lobby == CSteamID.Nil)
         {
-            return "The Helper chalkboard restore request could not reach the current host; no board changed.";
+            return "Your request couldn't reach the host. No board changed.";
         }
 
         try
@@ -186,14 +197,14 @@ internal static class ChalkboardPersistenceController
                 nonce,
                 normalized);
             SteamMatchmaking.SetLobbyMemberData(lobby, ChalkboardModerationPolicy.MemberDataKey, payload);
-            return $"Helper restore request sent privately for host-local snapshot '{normalized}' and board {index}. " +
-                   "The host will revalidate exact Helper identity, current scene/index/fingerprint, freshness, request size/version, nonce/replay, and its own saved snapshot before changing the board; no chat line was sent. " +
-                   ChalkboardModerationController.BuildTruth(
-                       "load-request",
-                       index,
-                       DescribeBoardScene(board, index),
-                       normalized,
-                       "pending-host");
+            return WithLoggedDetail(
+                $"Request sent quietly to the host to load '{normalized}' onto board {index}; they'll double-check before changing the board.",
+                ChalkboardModerationController.BuildTruth(
+                    "load-request",
+                    index,
+                    DescribeBoardScene(board, index),
+                    normalized,
+                    "pending-host"));
         }
         catch (Exception ex)
         {
@@ -202,7 +213,7 @@ internal static class ChalkboardPersistenceController
                 ex.GetType().Name +
                 ": " +
                 ex.Message);
-            return "The Helper chalkboard restore request failed safely; no board changed.";
+            return "Your request couldn't be sent. No board changed.";
         }
     }
 
@@ -218,7 +229,7 @@ internal static class ChalkboardPersistenceController
             !SteamIdModerationController.TryGetOwnedHostLobby(out _, out _) ||
             !SteamIdModerationController.IsAuthorizedCurrentIssuer(issuerSteamId))
         {
-            message = "Only the active host or a currently authorized Helper can request a shared chalkboard restore.";
+            message = "Only the host or an assigned Helper can load a board for everyone.";
             return ChalkboardClearResult.Rejected;
         }
         if (!TryResolveBoard(
@@ -234,29 +245,29 @@ internal static class ChalkboardPersistenceController
         if (resolvedIndex != index ||
             !string.Equals(currentFingerprint, expectedFingerprint, StringComparison.Ordinal))
         {
-            message = "The board identity changed after selection. No board changed; run /chalk boards again.";
+            message = "That board changed since it was picked. No board changed; run /chalk boards again.";
             return ChalkboardClearResult.Rejected;
         }
         if (!board.isServer)
         {
-            message = "The current client is not the authoritative board server. No board changed.";
+            message = "Only the lobby host's game can change shared boards. No board changed.";
             return ChalkboardClearResult.Rejected;
         }
         if (_rollbackUnresolved || ChalkboardSnapshotTransportController.DestructiveActionsBlocked)
         {
-            message = "A prior chalkboard rollback remains unresolved. No destructive board action is allowed.";
+            message = "An earlier board undo didn't finish, so load and clear stay paused until the boards reload or the game restarts.";
             return ChalkboardClearResult.Rejected;
         }
         if ((DateTime.UtcNow - _lastSharedRestoreUtc).TotalSeconds < 8d)
         {
-            message = "Chalkboard restore is cooling down; wait a few seconds before another shared restore.";
+            message = "A board was just loaded. Wait a few seconds before loading another.";
             return ChalkboardClearResult.Rejected;
         }
 
         string path = Path.Combine(SaveDirectory, normalized + ".bschalk");
         if (!File.Exists(path))
         {
-            message = $"Host-local chalkboard snapshot '{normalized}' was not found. Use /chalk list.";
+            message = $"The host has no saved board called '{normalized}'. Use /chalk list on the host's game.";
             return ChalkboardClearResult.Rejected;
         }
 
@@ -268,8 +279,7 @@ internal static class ChalkboardPersistenceController
             int[][] grid = ReadGrid(path, board);
             if (!TrySaveResolved(recoveryName, board, index, out string recoveryMessage))
             {
-                message = "Pre-restore recovery snapshot failed, so BlueSage left the board unchanged. " +
-                          recoveryMessage;
+                message = "The backup before loading couldn't be saved, so the board was left as it was.";
                 return ChalkboardClearResult.Rejected;
             }
 
@@ -284,14 +294,15 @@ internal static class ChalkboardPersistenceController
                 "ready");
             if (!delivery.IsComplete)
             {
-                message = $"Chalkboard '{normalized}' restored locally to board {index}, but compatible-recipient delivery was partial " +
-                          $"(attempted {delivery.Attempted}, sent {delivery.Sent}, skipped {delivery.Skipped}). " +
-                          "After the restore cooldown, repeating the exact action is retry-safe. " +
-                          truth;
+                message = WithLoggedDetail(
+                    $"Loaded '{normalized}' onto board {index}, but some players may not see it yet. Wait a few seconds, then load it again to be sure.",
+                    $"load partial: attempted {delivery.Attempted}, sent {delivery.Sent}, skipped {delivery.Skipped}; repeating after the cooldown is retry-safe. " +
+                    truth);
                 return ChalkboardClearResult.Partial;
             }
-            message = $"Chalkboard '{normalized}' restored to board {index}. Compatible QoL clients replace stale pixels before the native full-board repaint. " +
-                      truth;
+            message = WithLoggedDetail(
+                $"Loaded '{normalized}' onto board {index}. A backup of the old board was saved first.",
+                truth);
             return ChalkboardClearResult.Complete;
         }
         catch (Exception ex)
@@ -316,10 +327,14 @@ internal static class ChalkboardPersistenceController
                 }
             }
             Plugin.Log?.LogWarning($"Chalkboard restore rejected safely: {ex.GetType().Name}: {ex.Message}");
-            message = "Chalkboard restore failed; rollback=" +
-                      (rollbackSucceeded ? "restored" : "unresolved-blocking") +
-                      ", recovery snapshot='" + recoveryName +
-                      "', vanillaObserver=not-observed.";
+            message = WithLoggedDetail(
+                rollbackSucceeded
+                    ? $"Loading the board didn't work, so it was put back. A backup is saved as '{recoveryName}'."
+                    : $"Loading the board didn't work and it couldn't be put back fully. Load and clear are paused; a backup is saved as '{recoveryName}'.",
+                "restore failed; rollback=" +
+                (rollbackSucceeded ? "restored" : "unresolved-blocking") +
+                ", recovery snapshot='" + recoveryName +
+                "', vanillaObserver=not-observed.");
             return ChalkboardClearResult.Rejected;
         }
     }
@@ -339,9 +354,11 @@ internal static class ChalkboardPersistenceController
         string list = names.Length == 0
             ? "Chalkboard saves: none yet."
             : "Chalkboard saves: " + string.Join(", ", names) + ".";
-        return list + " authority=local-only, snapshot=local-library, rollback=" +
-               (_rollbackUnresolved ? "unresolved" : "ready") +
-               ", vanillaObserver=not-applicable.";
+        return WithLoggedDetail(
+            list,
+            "list: authority=local-only, snapshot=local-library, rollback=" +
+            (_rollbackUnresolved ? "unresolved" : "ready") +
+            ", vanillaObserver=not-applicable.");
     }
 
     internal static string Delete(string name)
@@ -351,7 +368,7 @@ internal static class ChalkboardPersistenceController
         string target = Path.Combine(SaveDirectory, normalized + ".bschalk");
         if (!File.Exists(target))
         {
-            return $"Chalkboard '{normalized}' was not found in the local save library.";
+            return $"There's no saved board called '{normalized}'. Use /chalk list to see your saves.";
         }
 
         try
@@ -359,28 +376,29 @@ internal static class ChalkboardPersistenceController
             string backup = target + ".bak";
             File.Copy(target, backup, overwrite: true);
             File.Delete(target);
-            return $"Deleted local chalkboard save '{normalized}' after preserving '{Path.GetFileName(backup)}'. " +
-                   ChalkboardCommandPolicy.BuildActionTruth(
-                       "delete",
-                       -1,
-                       "local-save-library",
-                       "local-only",
-                       0,
-                       Path.GetFileName(backup),
-                       "reversible-from-backup",
-                       "not-applicable");
+            return WithLoggedDetail(
+                $"Deleted your save '{normalized}'. A backup copy was kept as '{Path.GetFileName(backup)}'.",
+                ChalkboardCommandPolicy.BuildActionTruth(
+                    "delete",
+                    -1,
+                    "local-save-library",
+                    "local-only",
+                    0,
+                    Path.GetFileName(backup),
+                    "reversible-from-backup",
+                    "not-applicable"));
         }
         catch (Exception ex)
         {
             Plugin.Log?.LogWarning(
                 "Chalkboard local delete failed safely: " + ex.GetType().Name + ": " + ex.Message);
-            return "Chalkboard local delete failed safely; the saved snapshot was not intentionally removed.";
+            return "That save couldn't be deleted. It should still be there.";
         }
     }
 
     internal static string RefreshMap()
     {
-        return "Chalkboard map refreshed locally. " + Boards();
+        return "Boards found again. " + Boards();
     }
 
     internal static string View(string boardToken)
@@ -395,13 +413,15 @@ internal static class ChalkboardPersistenceController
         {
             return error;
         }
-        return "Viewed exact board fingerprint " + fingerprint + ". " +
-               ChalkboardModerationController.BuildTruth(
-                   "view",
-                   index,
-                   DescribeBoardScene(board, index),
-                   "none",
-                   _rollbackUnresolved ? "unresolved" : "ready");
+        return WithLoggedDetail(
+            "Board " + index + " found and ready. Nothing was changed.",
+            "view fingerprint=" + fingerprint + ". " +
+            ChalkboardModerationController.BuildTruth(
+                "view",
+                index,
+                DescribeBoardScene(board, index),
+                "none",
+                _rollbackUnresolved ? "unresolved" : "ready"));
     }
 
     internal static string Boards()
@@ -479,24 +499,28 @@ internal static class ChalkboardPersistenceController
                 ? ", " + Vector3.Distance(localPosition, position).ToString("0.0", CultureInfo.InvariantCulture) + "m away"
                 : string.Empty;
             string displayPath = hierarchyPath.Length > 96 ? "…" + hierarchyPath.Substring(hierarchyPath.Length - 95) : hierarchyPath;
+            Plugin.Log?.LogInfo(
+                $"[BlueSageChalk] board {index} {entry.Label} scene={SafeDisplayName(sceneName)} state={mappingState} at ({position.x:0.0},{position.y:0.0},{position.z:0.0}) — " +
+                displayPath);
             descriptions.Add(
-                $"{index} {entry.Label} scene={SafeDisplayName(sceneName)} state={mappingState} at ({position.x:0.0},{position.y:0.0},{position.z:0.0}){distanceText}" +
-                (markers.Length > 0 ? " [" + markers.Trim() + "]" : string.Empty) +
-                " — " + displayPath);
+                $"{index} {entry.Label}{distanceText}" +
+                (string.Equals(mappingState, "mapped", StringComparison.Ordinal) ? string.Empty : " (not where expected; locked)") +
+                (markers.Length > 0 ? " [" + markers.Trim() + "]" : string.Empty));
         }
 
         string ignoredExtra = manager.QuadPainterGPUS.Count > 3
-            ? " Extra live surfaces are ignored and cannot become index 3."
+            ? " Other boards in this scene are left alone."
             : string.Empty;
-        return "Chalkboards (fresh for " + ChalkboardCommandPolicy.FreshListSeconds +
-               "s; verified catalog): " +
+        Plugin.Log?.LogInfo(
+            "[BlueSageChalk] boards: compatibleRecipients=" + ChalkboardModerationController.CountCompatibleRecipients() +
+            ", snapshot=required-before-destructive-action, rollback=" +
+            (_rollbackUnresolved ? "unresolved" : "ready") +
+            ", vanillaObserver=not-observed.");
+        return "Chalkboards: " +
                string.Join("; ", descriptions) +
                "." + ignoredExtra +
-               " Local actions: view/save/delete/refresh. Shared actions: Host-direct or authenticated Helper-to-Host load/clear. " +
-               "compatibleRecipients=" + ChalkboardModerationController.CountCompatibleRecipients() +
-               ", snapshot=required-before-destructive-action, rollback=" +
-               (_rollbackUnresolved ? "unresolved" : "ready") +
-               ", vanillaObserver=not-observed. Clear/load only after rechecking this list.";
+               " Anyone can view, save, or delete their own saves. The host or a Helper can load or clear within the next " +
+               ChalkboardCommandPolicy.FreshListSeconds + " seconds.";
     }
 
     internal static string TryClear(string boardToken)
@@ -539,7 +563,7 @@ internal static class ChalkboardPersistenceController
 
         if (!Plugin.TryGetRescueLobby(out CSteamID lobby) || lobby == CSteamID.Nil)
         {
-            return "The Helper chalkboard clear request could not reach the current host; no board changed.";
+            return "Your request couldn't reach the host. No board changed.";
         }
 
         try
@@ -551,18 +575,19 @@ internal static class ChalkboardPersistenceController
                 DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 nonce);
             SteamMatchmaking.SetLobbyMemberData(lobby, ChalkboardModerationPolicy.MemberDataKey, payload);
-            return $"Helper clear request sent privately for board {index}. The host will recheck your Helper role, the live board fingerprint, freshness, nonce/replay guard, scene mapping, and exact index before clearing; no chat line was sent. " +
-                   ChalkboardModerationController.BuildTruth(
-                       "clear-request",
-                       index,
-                       DescribeBoardScene(board, index),
-                       "host-pre-action-required",
-                       "pending-host");
+            return WithLoggedDetail(
+                "Request sent quietly to the host; they'll double-check before changing the board.",
+                ChalkboardModerationController.BuildTruth(
+                    "clear-request",
+                    index,
+                    DescribeBoardScene(board, index),
+                    "host-pre-action-required",
+                    "pending-host"));
         }
         catch (Exception ex)
         {
             Plugin.Log?.LogWarning("Helper chalkboard clear request failed safely: " + ex.GetType().Name + ": " + ex.Message);
-            return "The Helper chalkboard clear request failed safely; no board changed.";
+            return "Your request couldn't be sent. No board changed.";
         }
     }
 
@@ -605,10 +630,12 @@ internal static class ChalkboardPersistenceController
     internal static void NotifyModerationBoardReview(string targetSteamId)
     {
         if (!Available) return;
+        Plugin.Log?.LogInfo(
+            "[BlueSageChalk] board review after ban of Steam …" + Suffix(targetSteamId) +
+            ": the game exposes no authoritative drawing-owner identity, so no board was guessed or auto-cleared.");
         Plugin.AddLocalNotification(
-            "Chalkboard moderation follow-up for banned Steam …" + Suffix(targetSteamId) +
-            ": the game exposes no authoritative drawing-owner identity, so BlueSage did not guess or auto-clear a board. " +
-            "If abusive chalk remains, run /chalk boards, verify the location/index, then /chalk clear <index>. A local recovery snapshot is saved before every clear.");
+            "Chalkboards after that ban: the game doesn't say who drew what, so no board was cleared automatically. " +
+            "If unkind drawings remain, run /chalk boards, then /chalk clear <number>. A backup is saved before every clear.");
     }
 
     internal static bool PrepareForFullSnapshot(QuadPainterGPU board)
@@ -663,10 +690,10 @@ internal static class ChalkboardPersistenceController
             "Host non-chat chalkboard " + request.Action +
             " request from Steam …" + Suffix(senderSteamId) + ": " + message);
         string notificationPrefix = result == ChalkboardClearResult.Complete
-            ? "Authorized Helper chalkboard action: "
+            ? "Helper board request done: "
             : result == ChalkboardClearResult.Partial
-                ? "Authorized Helper chalkboard action needs retry: "
-                : "Helper chalkboard action rejected: ";
+                ? "Helper board request partly done: "
+                : "Helper board request not carried out: ";
         Plugin.AddLocalNotification(notificationPrefix + message);
     }
 
@@ -680,7 +707,7 @@ internal static class ChalkboardPersistenceController
         if (!SteamIdModerationController.TryGetOwnedHostLobby(out CSteamID lobby, out _) ||
             !SteamIdModerationController.IsAuthorizedCurrentIssuer(issuerSteamId))
         {
-            message = "Only the active host or a currently authorized Helper can request a shared chalkboard clear.";
+            message = "Only the host or an assigned Helper can clear a board for everyone.";
             return ChalkboardClearResult.Rejected;
         }
         if (!TryResolveBoard(index.ToString(CultureInfo.InvariantCulture), out QuadPainterGPU board, out int resolvedIndex, out string currentFingerprint, out string error))
@@ -690,17 +717,17 @@ internal static class ChalkboardPersistenceController
         }
         if (resolvedIndex != index || !string.Equals(currentFingerprint, expectedFingerprint, StringComparison.Ordinal))
         {
-            message = "The board identity changed after selection. No board changed; run /chalk boards again.";
+            message = "That board changed since it was picked. No board changed; run /chalk boards again.";
             return ChalkboardClearResult.Rejected;
         }
         if (!board.isServer)
         {
-            message = "The current client is not the authoritative board server. No board changed.";
+            message = "Only the lobby host's game can change shared boards. No board changed.";
             return ChalkboardClearResult.Rejected;
         }
         if (_rollbackUnresolved || ChalkboardSnapshotTransportController.DestructiveActionsBlocked)
         {
-            message = "A prior chalkboard rollback remains unresolved. No destructive board action is allowed.";
+            message = "An earlier board undo didn't finish, so load and clear stay paused until the boards reload or the game restarts.";
             return ChalkboardClearResult.Rejected;
         }
 
@@ -708,14 +735,14 @@ internal static class ChalkboardPersistenceController
         if (LastClearByBoard.TryGetValue(cooldownKey, out DateTime lastClear) &&
             (DateTime.UtcNow - lastClear).TotalSeconds < ClearCooldownSeconds)
         {
-            message = "That board clear is cooling down; wait a few seconds, then recheck /chalk boards.";
+            message = "That board was just cleared. Wait a few seconds, then run /chalk boards again.";
             return ChalkboardClearResult.Rejected;
         }
 
         string backupName = "modclear-b" + index + "-" + DateTime.UtcNow.ToString("yyyyMMddTHHmmssZ", CultureInfo.InvariantCulture);
         if (!TrySaveResolved(backupName, board, index, out string backupMessage))
         {
-            message = "Pre-clear recovery snapshot failed, so BlueSage left the board unchanged. " + backupMessage;
+            message = "The backup before clearing couldn't be saved, so the board was left as it was.";
             return ChalkboardClearResult.Rejected;
         }
 
@@ -733,18 +760,17 @@ internal static class ChalkboardPersistenceController
                 "ready");
             if (!delivery.IsComplete)
             {
-                message =
-                    $"Cleared board {index} locally after saving recovery snapshot '{backupName}', but verified-recipient delivery was partial " +
-                    $"(attempted {delivery.Attempted}, sent {delivery.Sent}, skipped {delivery.Skipped}). " +
-                    $"After the {ClearCooldownSeconds}s cooldown, /chalk clear {index} is retry-safe because the authoritative board is already blank. " +
-                    truth;
+                message = WithLoggedDetail(
+                    $"Cleared board {index} (backup saved as '{backupName}'), but some players may still see the old drawing. " +
+                    $"After {ClearCooldownSeconds} seconds, /chalk clear {index} is safe to run again.",
+                    $"clear partial: attempted {delivery.Attempted}, sent {delivery.Sent}, skipped {delivery.Skipped}; retry-safe because the authoritative board is already blank. " +
+                    truth);
                 return ChalkboardClearResult.Partial;
             }
-            message =
-                $"Cleared board {index} after saving recovery snapshot '{backupName}'. " +
-                $"Verified-recipient delivery completed (attempted {delivery.Attempted}, sent {delivery.Sent}, skipped {delivery.Skipped}). " +
-                "Compatible QoL clients replace stale pixels before the native full-board repaint; validate any vanilla observer separately. " +
-                truth;
+            message = WithLoggedDetail(
+                $"Cleared board {index}. A backup was saved first as '{backupName}'.",
+                $"clear complete: attempted {delivery.Attempted}, sent {delivery.Sent}, skipped {delivery.Skipped}. " +
+                truth);
             return ChalkboardClearResult.Complete;
         }
         catch (Exception ex)
@@ -765,10 +791,14 @@ internal static class ChalkboardPersistenceController
                     "Chalkboard clear rollback repaint failed: " + rollbackEx.GetType().Name + ": " + rollbackEx.Message);
             }
             Plugin.Log?.LogWarning("Chalkboard clear failed safely: " + ex.GetType().Name + ": " + ex.Message);
-            message = "Chalkboard clear failed; rollback=" +
-                      (rollbackSucceeded ? "restored" : "unresolved-blocking") +
-                      ", recovery snapshot='" + backupName +
-                      "', vanillaObserver=not-observed.";
+            message = WithLoggedDetail(
+                rollbackSucceeded
+                    ? $"Clearing the board didn't work, so it was put back. A backup is saved as '{backupName}'."
+                    : $"Clearing the board didn't work and it couldn't be put back fully. Load and clear are paused; a backup is saved as '{backupName}'.",
+                "clear failed; rollback=" +
+                (rollbackSucceeded ? "restored" : "unresolved-blocking") +
+                ", recovery snapshot='" + backupName +
+                "', vanillaObserver=not-observed.");
             return ChalkboardClearResult.Rejected;
         }
     }
@@ -929,7 +959,7 @@ internal static class ChalkboardPersistenceController
         }
         if (!ChalkboardCatalogPolicy.TryGet(index, out ChalkboardCatalogEntry catalogEntry))
         {
-            error = "Board " + index + " is outside the verified chalkboard catalog. Index 3 is never accepted.";
+            error = "Board " + index + " isn't one BlueSage can save or clear. Use boards 0, 1, or 2.";
             return false;
         }
 
@@ -943,7 +973,7 @@ internal static class ChalkboardPersistenceController
             position.z);
         if (!string.Equals(mappedLocation, catalogEntry.Label, StringComparison.Ordinal))
         {
-            error = "Board " + index + " has an ambiguous scene/position mapping. No action is allowed; refresh /chalk boards.";
+            error = "Board " + index + " isn't where BlueSage expects it, so nothing was done. Run /chalk boards again.";
             return false;
         }
         fingerprint = ChalkboardModerationPolicy.BuildBoardFingerprint(
@@ -1155,7 +1185,7 @@ internal static class ChalkboardPersistenceController
         if (board == null ||
             !ChalkboardCatalogPolicy.TryGet(index, out ChalkboardCatalogEntry entry))
         {
-            error = "The selected board is outside the verified chalkboard catalog (boards 0-2).";
+            error = "That board isn't one BlueSage can save. Use boards 0, 1, or 2.";
             return false;
         }
         Vector3 position = board.transform.position;
@@ -1166,7 +1196,7 @@ internal static class ChalkboardPersistenceController
             position.z);
         if (!string.Equals(mapped, entry.Label, StringComparison.Ordinal))
         {
-            error = "The selected board mapping is ambiguous; use /chalk boards and choose exact index 0, 1, or 2.";
+            error = "That board isn't where BlueSage expects it. Run /chalk boards and pick 0, 1, or 2.";
             return false;
         }
         return true;

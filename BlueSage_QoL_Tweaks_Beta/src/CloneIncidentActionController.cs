@@ -61,7 +61,7 @@ internal static class CloneIncidentActionController
 
         string steamId = suspect ? incident.SuspectSteamId : incident.VictimSteamId;
         GUIUtility.systemCopyBuffer = steamId;
-        message = (suspect ? "Suspect" : "Protected victim") + " SteamID64 copied exactly: …" + PlayerIdentityEvidenceController.Suffix(steamId) + ".";
+        message = (suspect ? "Copier's" : "Original player's") + " Steam ID copied: …" + PlayerIdentityEvidenceController.Suffix(steamId) + ".";
         return true;
     }
 
@@ -80,8 +80,8 @@ internal static class CloneIncidentActionController
         }
 
         GUIUtility.systemCopyBuffer = "/sidban " + incident.Id;
-        message = "Exact suspect preview command copied for " + incident.Id + " (Steam …" +
-                  PlayerIdentityEvidenceController.Suffix(incident.SuspectSteamId) + "). Paste to preview; confirmation remains separate.";
+        message = "Ban preview command copied for " + incident.Id + " (Steam …" +
+                  PlayerIdentityEvidenceController.Suffix(incident.SuspectSteamId) + "). Paste it to see a preview; nothing happens until you confirm.";
         return true;
     }
 
@@ -118,7 +118,7 @@ internal static class CloneIncidentActionController
             CloneIncidentLedger.MarkResolved(incident.Id, TryGetLocalSteamId(), now);
             Patches.PlayerIdentityRoleHighlightController.RefreshAll();
             RecordLifecycle("resolved", incident, "host-published", "lobby-safety-host");
-            message = incident.Id + " resolved. The host-published QoL lobby state clears this incident without adding a chat line.";
+            message = incident.Id + " resolved. It clears for everyone with QoL; nothing was posted in chat.";
             return true;
         }
 
@@ -126,17 +126,18 @@ internal static class CloneIncidentActionController
             request.VictimSteamId, request.SuspectSteamId, request.StableId, request.IssuedUnixSeconds, request.Nonce);
         if (string.IsNullOrWhiteSpace(packet) || !Plugin.TryGetRescueLobby(out CSteamID lobby) || lobby == CSteamID.Nil)
         {
-            message = "The non-chat resolution request could not reach the QoL host, so the incident stayed open.";
+            message = "The request couldn't reach the host, so the incident stays open.";
             return false;
         }
         try { SteamMatchmaking.SetLobbyMemberData(lobby, CloneIncidentResolutionProtocolPolicy.MemberDataKey, packet); }
         catch (Exception ex)
         {
-            message = "The non-chat resolution request failed safely (" + ex.GetType().Name + "), so the incident stayed open.";
+            Plugin.Log?.LogWarning("Clone Shield resolution request could not be published: " + ex.GetType().Name + "; the incident stayed open.");
+            message = "The request couldn't be sent, so the incident stays open.";
             return false;
         }
 
-        message = incident.Id + " resolution published through non-chat Steam member data. It stays open until host-authenticated lobby state confirms completion; no chat line was sent.";
+        message = "Sent to the host to check and carry out. " + incident.Id + " stays open until the host confirms.";
         return true;
     }
 
@@ -156,7 +157,7 @@ internal static class CloneIncidentActionController
         }
 
         Patches.PlayerIdentityRoleHighlightController.RefreshAll();
-        message = incidentId.ToUpperInvariant() + " dismissed on this client only. No lobby moderation state changed.";
+        message = incidentId.ToUpperInvariant() + " dismissed for you only. Nothing changed for anyone else.";
         RecordLifecycle("dismissed-local", incident, "closed", "lobby-safety-local");
         return true;
     }
@@ -175,9 +176,9 @@ internal static class CloneIncidentActionController
             RecordLifecycle("dismissed-local", incident, "bulk-closed", "lobby-safety-local");
         if (dismissed > 0) Patches.PlayerIdentityRoleHighlightController.RefreshAll();
         message = dismissed == 0
-            ? "No open Clone Shield incidents needed local dismissal. No lobby moderation state changed."
+            ? "No open Clone Shield incidents to dismiss."
             : "Dismissed " + dismissed + " open Clone Shield " + (dismissed == 1 ? "incident" : "incidents") +
-              " on this client only. No bans, Helper state, or lobby moderation state changed.";
+              " for you only. No bans or Helpers changed, and nothing changed for anyone else.";
         return true;
     }
 
@@ -206,7 +207,8 @@ internal static class CloneIncidentActionController
         }
         if (!PlayerIdentityEvidenceController.TryResolveExact(steamId, out PlayerIdentityEvidence evidence, out string error))
         {
-            message = "Player incident cleanup refused: " + error + ".";
+            Plugin.Log?.LogInfo("Clone Shield player flag cleanup refused: " + error + ".");
+            message = "That player couldn't be matched safely, so nothing happened.";
             return false;
         }
 
@@ -216,9 +218,9 @@ internal static class CloneIncidentActionController
             RecordLifecycle("dismissed-local", incident, "player-flags-cleared", "lobby-safety-local");
         if (dismissed.Count > 0) Patches.PlayerIdentityRoleHighlightController.RefreshAll();
         message = dismissed.Count == 0
-            ? "No open Clone Shield flags were attached to that verified row."
+            ? "That player has no open Clone Shield flags."
             : "Cleared " + dismissed.Count + " open Clone Shield " + (dismissed.Count == 1 ? "incident" : "incidents") +
-              " involving " + evidence.DisplayName + " on this client only. Audit lifecycle records remain; no ban or lobby state changed.";
+              " involving " + evidence.DisplayName + " for you only. Your log keeps the record; no ban or lobby setting changed.";
         return true;
     }
 
@@ -318,7 +320,7 @@ internal static class CloneIncidentActionController
         Patches.PlayerIdentityRoleHighlightController.RefreshAll();
         RecordLifecycle("resolved", CloneIncidentLedger.HistorySnapshot.LastOrDefault(item =>
             string.Equals(item.StableId, request.StableId, StringComparison.Ordinal)), "helper-approved", "lobby-safety-host");
-        Plugin.AddLocalNotificationWithToast("Authorized helper resolved Clone Shield " + request.StableId + ". No chat message was sent.");
+        Plugin.AddLocalNotificationWithToast("Helper action done: Clone Shield " + request.StableId + " resolved. Nothing was posted in chat.");
     }
 
     internal static void PollHostResolutionMetadata()
@@ -340,7 +342,7 @@ internal static class CloneIncidentActionController
                     string.Equals(item.StableId, request.StableId, StringComparison.Ordinal)), "host-confirmed", "lobby-safety-peer");
                 if (Plugin.CanUseLobbySafety(out _))
                 {
-                    Plugin.AddLocalNotificationWithToast("Clone Shield " + request.StableId + " was resolved by the verified host/helper team.");
+                    Plugin.AddLocalNotificationWithToast("Clone Shield " + request.StableId + " was resolved by the host or a Helper.");
                 }
             }
         }
@@ -352,7 +354,7 @@ internal static class CloneIncidentActionController
 
     private static bool TryPublishHostResolution(CloneIncidentResolutionRequest request, out string message)
     {
-        message = "Only the active QoL lobby host can publish incident completion.";
+        message = "Only the lobby host can close an incident for everyone.";
         try
         {
             if (!Plugin.TryGetRescueLobby(out CSteamID lobby) || lobby == CSteamID.Nil || !SteamManager.Initialized ||
@@ -363,15 +365,16 @@ internal static class CloneIncidentActionController
             string value = CloneIncidentResolutionProtocolPolicy.BuildLobbyValue(owner, request);
             if (!SteamMatchmaking.SetLobbyData(lobby, CloneIncidentResolutionProtocolPolicy.LobbyDataKey, value))
             {
-                message = "Steam rejected the host incident-completion update.";
+                message = "Steam didn't accept the update, so the incident stays open.";
                 return false;
             }
-            message = "Host incident completion published.";
+            message = "Incident closed for everyone.";
             return true;
         }
         catch (Exception ex)
         {
-            message = "Host incident completion failed safely (" + ex.GetType().Name + ").";
+            Plugin.Log?.LogWarning("Clone Shield host resolution publish failed: " + ex.GetType().Name + ".");
+            message = "The incident couldn't be closed right now, so it stays open.";
             return false;
         }
     }

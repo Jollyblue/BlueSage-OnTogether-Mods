@@ -129,9 +129,8 @@ public sealed class ReconnectRejoinHoldPolicyTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(notice, Does.Contain("20"));
-            Assert.That(notice, Does.Contain("host"));
-            Assert.That(notice, Does.Contain("player count"));
+            Assert.That(notice, Is.EqualTo("Reconnecting in 20s so the host can clear your old spot first."));
+            Assert.That(ReconnectRejoinHoldPolicy.BuildHoldNotice(9999), Does.StartWith("Reconnecting in " + ReconnectRejoinHoldPolicy.ClampHoldSeconds(9999) + "s"), "The shown wait is the clamped one.");
         });
     }
 }

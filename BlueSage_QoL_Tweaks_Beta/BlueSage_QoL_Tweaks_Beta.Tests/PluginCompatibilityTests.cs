@@ -134,10 +134,14 @@ public sealed class PluginCompatibilityTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(plugin, Does.Contain("Desync owns periodic lobby/persona repair; BlueSage Host Health is read-only"));
-            Assert.That(plugin, Does.Contain("Echo can intentionally copy names/outfits, so Clone Shield remains clues-not-proof"));
+            // Voice pass (2026-10-23): plain sentences, mod names only (never a modder's name).
+            Assert.That(plugin, Does.Contain("Desync is installed: it handles lobby repairs, so BlueSage Host Health just watches."));
+            Assert.That(plugin, Does.Contain("Echo is installed: it can copy names and outfits on purpose, so Clone Shield treats lookalikes as clues, not proof."));
+            Assert.That(plugin, Does.Contain("Hush is installed: it shares the game's ban list; BlueSage still asks you to confirm each ban."));
+            Assert.That(plugin, Does.Contain("\"No other safety mods found that overlap with BlueSage.\""));
+            Assert.That(plugin, Does.Not.Contain("no overlapping Andrew defensive"));
             Assert.That(menu, Does.Contain("On for fresh installs"));
-            Assert.That(menu, Does.Contain("preserves every existing row"));
+            Assert.That(menu, Does.Contain("It never removes anything"));
             Assert.That(File.ReadAllText(Path.Combine(root, "src", "Patches", "ModerationRelayPatch.cs")), Does.Contain("HarmonyPriority(Priority.First)"));
             Assert.That(File.ReadAllText(Path.Combine(root, "src", "Patches", "ChatHistoryLimitPatch.cs")), Does.Contain("HarmonyPriority(Priority.Last)"));
         });

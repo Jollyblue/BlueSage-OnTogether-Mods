@@ -19,8 +19,8 @@ public sealed class VoicePositionRateGuardContractTests
             Assert.That(patch, Does.Contain("private static bool _targetResolutionAttempted;"));
             Assert.That(patch, Does.Contain("if (_targetResolutionAttempted) return _targetMethod;"));
             Assert.That(patch, Does.Contain("_targetResolutionAttempted = true;"));
-            Assert.That(patch, Does.Contain("available={_targetMethod != null}"));
-            Assert.That(patch, Does.Not.Contain("available={TargetMethod() != null}"));
+            // Round 4 R9: the diagnostic summary (which once risked re-running target resolution) is removed.
+            Assert.That(patch, Does.Not.Contain("GetDiagnosticSummary"));
             Assert.That(patch, Does.Contain("VoicePositionRatePolicy.ShouldForward("));
             Assert.That(patch, Does.Contain("MaximumTrackedObjects = 64"));
             Assert.That(patch, Does.Contain("return true;"));

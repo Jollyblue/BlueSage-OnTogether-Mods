@@ -104,7 +104,7 @@ internal static class HostConsoleReadinessPolicy
                 relayHealthy,
                 providerState,
                 relayState,
-                "Current client is not the verified lobby host.");
+                "You're not the host of this lobby.");
         }
 
         string reason = FirstRequiredFailure(
@@ -113,9 +113,7 @@ internal static class HostConsoleReadinessPolicy
             reconnectHealthy,
             playerLimitHealthy,
             providerRequired,
-            providerHealthy,
-            relayRequired,
-            relayHealthy);
+            providerHealthy);
         HostConsoleOverallState state = string.IsNullOrEmpty(reason)
             ? HostConsoleOverallState.Ready
             : HostConsoleOverallState.Degraded;
@@ -134,7 +132,7 @@ internal static class HostConsoleReadinessPolicy
             providerState,
             relayState,
             string.IsNullOrEmpty(reason)
-                ? "All required host lanes are ready."
+                ? "All host checks are ready."
                 : reason);
     }
 
@@ -178,18 +176,14 @@ internal static class HostConsoleReadinessPolicy
         bool reconnect,
         bool playerLimit,
         bool providerRequired,
-        bool providerHealthy,
-        bool relayRequired,
-        bool relayHealthy)
+        bool providerHealthy)
     {
-        if (!roster) return "Verified roster is not converged.";
-        if (!cleanup) return "Automatic cleanup is not healthy.";
-        if (!reconnect) return "Reconnect protection is not healthy.";
-        if (!playerLimit) return "PlayerLimit host integration is not healthy.";
+        if (!roster) return "Still matching players.";
+        if (!cleanup) return "Automatic cleanup needs attention.";
+        if (!reconnect) return "Reconnect protection needs attention.";
+        if (!playerLimit) return "Large-lobby support needs attention.";
         if (providerRequired && !providerHealthy)
-            return "Required host capability provider is not healthy.";
-        if (relayRequired && !relayHealthy)
-            return "Required Discord relay is not healthy.";
+            return "A required host add-on needs attention.";
         return string.Empty;
     }
 

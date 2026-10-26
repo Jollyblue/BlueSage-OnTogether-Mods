@@ -19,7 +19,8 @@ internal sealed class PerformanceOverlayController : MonoBehaviour
     private GUIStyle _selectedButtonStyle;
     private Texture2D _background;
 
-    private const string ModeHelp = "Vanilla statistics keep running. BlueSage classifies new activity as Work or Relax.";
+    private const string ModeHelp = "Your game stats don't change. This just labels new time as Work or Relax, for you.";
+    private const string CloseHelp = "Hide bar (turn it back on in Toggles)";
 
     private void Update()
     {
@@ -86,18 +87,25 @@ internal sealed class PerformanceOverlayController : MonoBehaviour
         if (GUI.Button(workRect, new GUIContent("WORK", ModeHelp),
                 currentMode == WorkRelaxMode.Work ? _selectedButtonStyle : _buttonStyle))
         {
-            WorkRelaxRuntimeController.SetMode(WorkRelaxMode.Work);
+            if (WorkRelaxRuntimeController.SetMode(WorkRelaxMode.Work) && currentMode != WorkRelaxMode.Work)
+            {
+                Plugin.Instance?.ShowToast("Work mode: your time now counts as Work.");
+            }
         }
         if (GUI.Button(relaxRect, new GUIContent("RELAX", ModeHelp),
                 currentMode == WorkRelaxMode.Relax ? _selectedButtonStyle : _buttonStyle))
         {
-            WorkRelaxRuntimeController.SetMode(WorkRelaxMode.Relax);
+            if (WorkRelaxRuntimeController.SetMode(WorkRelaxMode.Relax) && currentMode != WorkRelaxMode.Relax)
+            {
+                Plugin.Instance?.ShowToast("Relax mode: your time now counts as Relax.");
+            }
         }
-        if (GUI.Button(closeRect, "×"))
+        if (GUI.Button(closeRect, new GUIContent("×", CloseHelp)))
         {
             Plugin.EnablePerformanceOverlay.Value = false;
             Plugin.Instance?.SaveConfigFromQolMenu();
             _dragging = false;
+            Plugin.Instance?.ShowToast("Stats bar hidden. Turn it back on in the QoL menu: Toggles, Performance Overlay.");
             Plugin.Log?.LogInfo("Public QoL performance overlay hidden from its in-bar shortcut; reopen it from QoL Menu > Toggles > Personalization.");
         }
     }

@@ -29,7 +29,7 @@ public sealed class TransactionalStyleMutationContractTests
         Assert.That(source, Does.Contain("TryRestoreNativeDisplayName"));
         Assert.That(source, Does.Contain("PlayerIdInfoLimitPatch.HasExpectedCoverage"));
         Assert.That(source, Does.Contain("serializedName, displayName"));
-        Assert.That(source, Does.Contain("native player identity sync is not ready yet"));
+        Assert.That(source, Does.Contain("\"Your player info is still loading. Try again in a moment.\""));
     }
 
     [Test]

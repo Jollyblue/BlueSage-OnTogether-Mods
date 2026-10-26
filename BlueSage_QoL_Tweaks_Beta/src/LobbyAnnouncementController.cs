@@ -65,8 +65,19 @@ internal static class LobbyAnnouncementController
         }
 
         if (!Plugin.TryGetCurrentLobbyVisitKey(out string visitKey) ||
-            !LobbyMotdPolicy.ShouldShow(visitKey, _motdShownForVisit) ||
-            !LobbyMotdPolicy.TryParse(SteamMatchmaking.GetLobbyData(lobby, SteamIdModerationController.MotdKey), owner, out string motd))
+            !LobbyMotdPolicy.ShouldShow(visitKey, _motdShownForVisit))
+        {
+            return;
+        }
+
+        // Voice pass NOISE 1: a Reconnect Guard return to the same lobby already saw the host's message.
+        if (!WelcomeRepeatPolicy.ShouldShowHostMessage(Plugin.IsQuietReconnectVisit(visitKey)))
+        {
+            _motdShownForVisit = visitKey;
+            return;
+        }
+
+        if (!LobbyMotdPolicy.TryParse(SteamMatchmaking.GetLobbyData(lobby, SteamIdModerationController.MotdKey), owner, out string motd))
         {
             return;
         }

@@ -33,8 +33,8 @@ internal static class GuideOverlayPolicy
             ? "Fly has no key yet; pick one with /rebind fly."
             : flyKeyName.Trim() + " toggles fly, just for you.";
         string sweep = HotkeyLabelPolicy.IsUnbound(sweepKeyName)
-            ? "/sweep now tidies up right away."
-            : sweepKeyName.Trim() + " tidies up right away.";
+            ? "/sweep now runs a cleanup right away."
+            : sweepKeyName.Trim() + " runs a cleanup right away.";
 
         return new[]
         {
@@ -52,25 +52,34 @@ internal static class GuideOverlayPolicy
                 "Turn on Performance Overlay, then tap WORK or RELAX beside FPS / PING / RAM. BlueSage Report " +
                 "shows how your time split. It's a label just for you; your game stats, streaks and rewards never change."),
             new GuideSection(
+                "Your extra outfits",
+                "The game gives you three outfit styles. BlueSage adds six more, 4 to 9, right below them, already " +
+                "switched on. Open the avatar screen where you change your look, pick a style from the list, change " +
+                "your look and name it; each style keeps its own outfit, and styles 1 to 3 never change. Prefer the " +
+                "plain list? Turn off Extra Outfit Slots 4-9 in Toggles; your saved outfits stay waiting for you."),
+            new GuideSection(
                 "Chat that's easier to read",
                 "Timestamps, name mentions, copy buttons and safer links. If chat ever looks odd, /chatvanilla " +
                 "puts the normal chat back, then switch things on again one at a time."),
             new GuideSection(
-                "Little pop-ups (Toasts)",
-                "Small notes at the top of your screen for hotkeys, cleanups, reconnects, settings and host news, " +
+                "Toasts (little notes)",
+                "Small notes at the top of your screen for hotkeys, cleanups you start, reconnects, settings and host news, " +
                 "so nothing slips past on a small laptop screen. Like it quiet? Turn Toast Pop-ups off in Toggles."),
             new GuideSection(
                 "Keeping things smooth",
-                "Automatic Cleanup tidies unused stuff every 15 minutes. If you drop out, reconnect waits a moment " +
-                "so the host can clear your old spot first; that keeps the player count honest."),
+                "Automatic Cleanup frees unused game memory every 40 minutes and waits for a quiet moment, never during the " +
+                "game's own autosave. If you drop out, reconnect waits a moment so the host can clear your old spot " +
+                "first; that keeps the player count honest."),
             new GuideSection(
                 "Hosts & Helpers",
                 "Hosts can add trusted Helpers with /helper add. Hosts and Helpers can send everyone with QoL a quick " +
                 "heads-up with /announce <message>, perfect for restarts or breaks. BlueSage checks each player's " +
-                "Steam ID with Steam itself, so a look-alike name can't slip past your ban list."),
+                "Steam ID with Steam itself, so a look-alike name can't slip past your ban list. Hosts can also kick " +
+                "(/sidkick) and mute a player for everyone (/sidmute), ban someone who rejoined through a reconnect " +
+                "mod, and read the Host journal in Host Tools to see who did what."),
             new GuideSection(
                 "Need a hand?",
-                "/qol status runs a quick health check, and typing / lets you browse every command. The QoL menu " +
+                "/qol status shows what is on, and typing / lets you browse every command. The QoL menu " +
                 "links the community Discord, and our website is Coming Soon. Made by Blue + Sage = BlueSage with superpowered neurodivergence ♥"),
         };
     }

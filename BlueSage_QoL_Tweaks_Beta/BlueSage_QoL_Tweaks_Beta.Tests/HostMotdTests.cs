@@ -4,7 +4,7 @@ using NUnit.Framework;
 namespace BlueSage.QoLTweaks.Tests;
 
 // Blue (2026-10-17): hosts can set a lobby MOTD that QoL players see on join as a toast and chat line;
-// a host who never sets one shows "Welcome to my server!". Only the lobby owner can write lobby data,
+// a host who never sets one shows "Welcome to my lobby!" (voice pass 2026-10-23: lobby, not server). Only the lobby owner can write lobby data,
 // and the payload names the owner so a previous host's message is never shown.
 public sealed class HostMotdTests
 {
@@ -15,9 +15,9 @@ public sealed class HostMotdTests
     {
         Assert.Multiple(() =>
         {
-            Assert.That(LobbyMotdPolicy.Effective(""), Is.EqualTo("Welcome to my server!"));
-            Assert.That(LobbyMotdPolicy.Effective("   "), Is.EqualTo("Welcome to my server!"));
-            Assert.That(LobbyMotdPolicy.DefaultMessage, Is.EqualTo("Welcome to my server!"));
+            Assert.That(LobbyMotdPolicy.Effective(""), Is.EqualTo("Welcome to my lobby!"));
+            Assert.That(LobbyMotdPolicy.Effective("   "), Is.EqualTo("Welcome to my lobby!"));
+            Assert.That(LobbyMotdPolicy.DefaultMessage, Is.EqualTo("Welcome to my lobby!"));
         });
     }
 
@@ -94,7 +94,7 @@ public sealed class HostMotdTests
     [Test]
     public void Motd_toast_says_who_it_is_from()
     {
-        Assert.That(LobbyMotdPolicy.FormatToast("Welcome to my server!"), Is.EqualTo("Message from the host: Welcome to my server!"));
+        Assert.That(LobbyMotdPolicy.FormatToast("Welcome to my lobby!"), Is.EqualTo("Message from the host: Welcome to my lobby!"));
     }
 
     [Test]

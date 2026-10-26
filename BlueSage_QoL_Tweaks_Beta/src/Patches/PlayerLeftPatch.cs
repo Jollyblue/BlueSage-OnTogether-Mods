@@ -35,7 +35,7 @@ internal static class PlayerLeftPatch
                     playerName = "Someone";
                 }
 
-                Plugin.AddLocalNotification($"{playerName} has left the server.");
+                Plugin.AddLocalNotification($"{playerName} has left the lobby.");
                 return;
             }
         }

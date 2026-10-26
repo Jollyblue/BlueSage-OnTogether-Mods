@@ -10,12 +10,27 @@ public sealed class AwarenessAndFlyWiringContractTests
     public void Reconnect_safety_helper_and_rescue_notices_also_toast()
     {
         string plugin = ReadSource("Plugin.cs");
-        string reconnect = Slice(plugin, "AddLocalNotificationWithToast(\"BlueSage reconnect is cleaning up", "BlueSage could not uniquely validate a replacement lobby");
+        // Voice pass (2026-10-23): the reconnect journey texts are named constants; the slice runs from the first
+        // notice to the last one so every stage in between is checked.
+        string reconnect = Slice(plugin, "AddLocalNotificationWithToast(ReconnectStartingNotice);", "private static Task StartReplacementLobbySearch(");
 
         Assert.Multiple(() =>
         {
             Assert.That(plugin, Does.Contain("internal static bool AddLocalNotificationWithToast(string text)"));
-            Assert.That(reconnect, Does.Not.Contain(" AddLocalNotification(\"BlueSage reconnect"));
+            Assert.That(reconnect, Is.Not.Empty);
+            Assert.That(reconnect, Does.Not.Contain(" AddLocalNotification("));
+            foreach (string notice in new[] { "ReconnectJoiningNotice", "ReconnectIncompleteNotice", "ReconnectStoppedNotice", "ReconnectLobbyNotFoundNotice", "ReconnectSearchingNotice", "ReconnectFoundNewLobbyNotice" })
+            {
+                Assert.That(reconnect, Does.Contain("AddLocalNotificationWithToast(" + notice + ");"), notice);
+            }
+
+            Assert.That(plugin, Does.Contain("internal const string ReconnectStartingNotice = \"Connection dropped. BlueSage is getting you back in…\";"));
+            Assert.That(plugin, Does.Contain("internal const string ReconnectJoiningNotice = \"Reconnecting to your lobby now.\";"));
+            Assert.That(plugin, Does.Contain("internal const string ReconnectIncompleteNotice = \"That reconnect didn't finish. BlueSage is stepping back to the menu.\";"));
+            Assert.That(plugin, Does.Contain("internal const string ReconnectStoppedNotice = \"Reconnect stopped. You can rejoin from the menu whenever you're ready.\";"));
+            Assert.That(plugin, Does.Contain("internal const string ReconnectLobbyNotFoundNotice = \"BlueSage couldn't find your lobby again, so you're back at the menu. You can rejoin from there.\";"));
+            Assert.That(plugin, Does.Contain("internal const string ReconnectSearchingNotice = \"Looking for your host's new lobby…\";"));
+            Assert.That(plugin, Does.Contain("internal const string ReconnectFoundNewLobbyNotice = \"Found your host's new lobby. Reconnecting.\";"));
             Assert.That(ReadSource("CloneShieldController.cs"), Does.Contain("Plugin.AddLocalNotificationWithToast("));
             Assert.That(ReadSource("CloneIncidentActionController.cs"), Does.Contain("Plugin.AddLocalNotificationWithToast("));
             Assert.That(ReadSource("IdentityResyncController.cs"), Does.Contain("Plugin.AddLocalNotificationWithToast("));
@@ -33,7 +48,7 @@ public sealed class AwarenessAndFlyWiringContractTests
         {
             // Round 3: width also follows the toast size (Auto/75-200%), still capped by the screen gutter.
             Assert.That(plugin, Does.Contain("private static float ToastWidth => ToastPolicy.ComputeWidth(Screen.width, ToastScale);"));
-            Assert.That(plugin, Does.Contain("ToastPolicy.IsDuplicateOfVisible(text, _toasts, Time.unscaledTime)"));
+            Assert.That(plugin, Does.Contain("ToastPolicy.IsDuplicateOfVisible(text, _toasts, Time.unscaledTime, LockedToastHoldSeconds)"));
         });
     }
 
@@ -151,8 +166,23 @@ public sealed class AwarenessAndFlyWiringContractTests
             Assert.That(create, Does.Contain("IsQolSweepCreatingNativeRoutine = true;"));
             Assert.That(create, Does.Contain("finally"));
             Assert.That(create, Does.Contain("IsQolSweepCreatingNativeRoutine = false;"));
-            Assert.That(patch, Does.Contain("if (Plugin.IsQolSweepCreatingNativeRoutine)"));
+            Assert.That(patch, Does.Contain("SweepMenuActionPolicy.ShouldToastGameCleanup(Plugin.IsQolSweepCreatingNativeRoutine, Plugin.NotifyOnSweep?.Value == true)"));
             Assert.That(patch, Does.Not.Contain("AddLocalNotification"));
+        });
+    }
+
+    // NOISE 3 (voice pass 2026-10-23): automatic cleanups are quiet by default, the game's own included.
+    [Test]
+    public void Game_cleanup_toast_waits_for_cleanup_notices_and_uses_the_cleanup_wording()
+    {
+        string patch = ReadSource("Patches", "VanillaSweepToastPatch.cs");
+        string postfix = Slice(patch, "private static void Postfix()", "Plugin.Instance?.ShowToast(VanillaSweepToastText)");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(postfix, Does.Contain("if (!SweepMenuActionPolicy.ShouldToastGameCleanup("), "The gate runs before the toast.");
+            Assert.That(patch, Does.Contain("internal const string VanillaSweepToastText = SweepMenuActionPolicy.GameCleanupToast;"));
+            Assert.That(patch, Does.Not.Contain("tidy-up"));
         });
     }
 

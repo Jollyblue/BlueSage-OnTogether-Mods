@@ -36,7 +36,7 @@ public sealed class WorkRelaxRuntimeContractTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(runtime, Does.Contain("Paths.ConfigPath"));
+            Assert.That(runtime, Does.Contain("WorkRelaxLedgerStore.ForLedgerDirectory(ModSuitePaths.Current.WorkRelaxDirectory, profileKey, ModSuitePaths.Current.WorkRelaxFilePrefix)"), "Round 5d: BlueSageQoLModSuite/trackers/work-relax-p_<id>.json, or the old place while the move is unfinished.");
             Assert.That(runtime, Does.Contain("WorkRelaxProfileKey.Create"));
             Assert.That(runtime, Does.Contain("SteamUser.GetSteamID()"));
             Assert.That(runtime, Does.Contain("WorkRelaxMode.Work"));

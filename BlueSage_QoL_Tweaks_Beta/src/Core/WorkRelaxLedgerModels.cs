@@ -46,6 +46,9 @@ internal sealed class WorkRelaxLedger
     [DataMember(Name = "recovery", Order = 8)]
     public WorkRelaxLedgerRecovery Recovery { get; set; } = new();
 
+    // Copies on purpose: callers can never mutate the ledger through a returned record (pinned by
+    // WorkRelaxLedgerTests). Round 5 Stage A keeps this contract; with minutes joined into stretches the list is
+    // about ten times shorter, so the per-refresh clone cost that worried the audit went away with the rows.
     public IReadOnlyList<WorkRelaxLedgerEvent> Events =>
         new ReadOnlyCollection<WorkRelaxLedgerEvent>(_events.Select(ledgerEvent => ledgerEvent.Clone()).ToList());
 
@@ -73,6 +76,9 @@ internal sealed class WorkRelaxLedger
         };
     }
 
+    // Round 4 Stage G: the one source whose rows merge per UTC day (see AppendReconciliationEvent).
+    public const string ReconciliationSource = "Native reconciliation";
+
     public void AppendEvent(WorkRelaxLedgerEvent ledgerEvent)
     {
         if (ledgerEvent == null)
@@ -85,8 +91,175 @@ internal sealed class WorkRelaxLedger
             throw new ArgumentException("A primary event cannot target another event.", nameof(ledgerEvent));
         }
 
+        // Round 5 Stage A: a focus or activity minute joins the current stretch (see WorkRelaxLedgerCoalescingPolicy).
+        int mergeIndex = WorkRelaxLedgerCoalescingPolicy.FindMergeIndex(_events, ledgerEvent, IsTargetedByCorrection);
+        if (mergeIndex >= 0)
+        {
+            JoinStretch(_events, mergeIndex, ledgerEvent);
+            return;
+        }
+
         _events.Add(ledgerEvent.Clone());
     }
+
+    // The stretch takes the minute's amount and time and moves to the end, so the list stays ordered by last
+    // tick and the policy's backward scan (which stops at the first row older than the gap) stays correct.
+    private static void JoinStretch(List<WorkRelaxLedgerEvent> events, int index, WorkRelaxLedgerEvent incoming)
+    {
+        WorkRelaxLedgerEvent stretch = events[index];
+        stretch.Amount += incoming.Amount;
+        stretch.UtcTicks = incoming.UtcTicks;
+        if (index != events.Count - 1)
+        {
+            events.RemoveAt(index);
+            events.Add(stretch);
+        }
+    }
+
+    // Round 5 Stage A: one-time fold of a ledger written before coalescing (one row per native tick). Replays
+    // every row through the same merge rule in time order; totals never change. Returns how many rows vanished.
+    public int CoalesceHistory(long gapTicks = WorkRelaxLedgerCoalescingPolicy.GapTicks)
+    {
+        var targeted = new HashSet<string>(StringComparer.Ordinal);
+        foreach (WorkRelaxLedgerEvent correction in _corrections)
+        {
+            if (!string.IsNullOrEmpty(correction.TargetEventId))
+            {
+                targeted.Add(correction.TargetEventId!);
+            }
+        }
+
+        var rebuilt = new List<WorkRelaxLedgerEvent>(_events.Count);
+        foreach (WorkRelaxLedgerEvent item in _events.OrderBy(ledgerEvent => ledgerEvent.UtcTicks))
+        {
+            int mergeIndex = WorkRelaxLedgerCoalescingPolicy.FindMergeIndex(rebuilt, item, targeted.Contains, gapTicks);
+            if (mergeIndex >= 0)
+            {
+                JoinStretch(rebuilt, mergeIndex, item);
+                continue;
+            }
+
+            rebuilt.Add(item);
+        }
+
+        int removed = _events.Count - rebuilt.Count;
+        _events = rebuilt;
+        return removed;
+    }
+
+    // Round 5d: one-time removal of Today/Week/Month rows written before they became derived (each one repeated its
+    // Total row). A row a correction points at stays so every correction keeps its target; corrections themselves
+    // are never touched. Idempotent. Returns how many rows went.
+    public int StripDerivedRows()
+    {
+        var targeted = new HashSet<string>(StringComparer.Ordinal);
+        foreach (WorkRelaxLedgerEvent correction in _corrections)
+        {
+            if (!string.IsNullOrEmpty(correction.TargetEventId))
+            {
+                targeted.Add(correction.TargetEventId!);
+            }
+        }
+
+        return _events.RemoveAll(item => WorkRelaxMetricCatalog.IsDerived(item.MetricKey) && !targeted.Contains(item.EventId));
+    }
+
+    // Round 4 Stage G (Marbles, 2026-10-20): reconciliation rows are catch-all Unclassified adjustments with no
+    // session correlation, written at every autosave (about 17 per autosave in Blue's ledger, 30% of its 2.6 MB).
+    // A row for the same UTC day, metric and mode absorbs the new amount unless a correction already targets it,
+    // so the report's balances are unchanged while the file stops growing on idle players.
+    public void AppendReconciliationEvent(WorkRelaxLedgerEvent ledgerEvent)
+    {
+        if (ledgerEvent == null)
+        {
+            throw new ArgumentNullException(nameof(ledgerEvent));
+        }
+
+        if (!string.Equals(ledgerEvent.Source, ReconciliationSource, StringComparison.Ordinal))
+        {
+            throw new ArgumentException("Only reconciliation rows merge.", nameof(ledgerEvent));
+        }
+
+        long newDay = UtcDay(ledgerEvent.UtcTicks);
+        for (int index = _events.Count - 1; index >= 0; index--)
+        {
+            WorkRelaxLedgerEvent existing = _events[index];
+            if (!string.Equals(existing.Source, ReconciliationSource, StringComparison.Ordinal) ||
+                !string.Equals(existing.MetricKey, ledgerEvent.MetricKey, StringComparison.Ordinal) ||
+                !string.Equals(existing.Mode, ledgerEvent.Mode, StringComparison.Ordinal) ||
+                UtcDay(existing.UtcTicks) != newDay)
+            {
+                continue;
+            }
+
+            if (IsTargetedByCorrection(existing.EventId))
+            {
+                break;
+            }
+
+            existing.Amount += ledgerEvent.Amount;
+            existing.UtcTicks = Math.Max(existing.UtcTicks, ledgerEvent.UtcTicks);
+            return;
+        }
+
+        AppendEvent(ledgerEvent);
+    }
+
+    // Round 4 Stage G: fold rows older than the retention window (see WorkRelaxLedgerCompactionPolicy). Returns how
+    // many rows disappeared; 0 means the ledger was already compact.
+    public int CompactHistory(long nowUtcTicks, int retentionDays = WorkRelaxLedgerCompactionPolicy.RetentionDays)
+    {
+        var targeted = new HashSet<string>(StringComparer.Ordinal);
+        foreach (WorkRelaxLedgerEvent correction in _corrections)
+        {
+            if (!string.IsNullOrEmpty(correction.TargetEventId))
+            {
+                targeted.Add(correction.TargetEventId!);
+            }
+        }
+
+        int before = _events.Count;
+        _events = WorkRelaxLedgerCompactionPolicy.Compact(_events, targeted, nowUtcTicks, retentionDays);
+        return before - _events.Count;
+    }
+
+    // Round 4 Stage G: a deep copy for the background writer, so serialization never reads the live lists.
+    public WorkRelaxLedger Clone()
+    {
+        var copy = new WorkRelaxLedger
+        {
+            SchemaVersion = SchemaVersion,
+            ProfileKey = ProfileKey,
+            LastMode = LastMode,
+            Baseline = Baseline.Clone(),
+            LastReconciled = LastReconciled.Clone(),
+            Recovery = new WorkRelaxLedgerRecovery
+            {
+                LastSuccessfulSaveUtcTicks = Recovery.LastSuccessfulSaveUtcTicks,
+                RecoveryCount = Recovery.RecoveryCount,
+                MoodBaselineInitialized = Recovery.MoodBaselineInitialized,
+                AchievementBaselineInitialized = Recovery.AchievementBaselineInitialized
+            }
+        };
+        copy._events = _events.Select(item => item.Clone()).ToList();
+        copy._corrections = _corrections.Select(item => item.Clone()).ToList();
+        return copy;
+    }
+
+    private bool IsTargetedByCorrection(string eventId)
+    {
+        foreach (WorkRelaxLedgerEvent correction in _corrections)
+        {
+            if (string.Equals(correction.TargetEventId, eventId, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static long UtcDay(long utcTicks) => utcTicks / TimeSpan.TicksPerDay;
 
     public void AppendCorrection(WorkRelaxLedgerEvent correction)
     {

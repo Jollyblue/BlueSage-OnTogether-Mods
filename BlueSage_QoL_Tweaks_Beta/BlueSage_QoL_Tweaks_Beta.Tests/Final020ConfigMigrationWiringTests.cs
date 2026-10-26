@@ -23,7 +23,7 @@ public sealed class Final020ConfigMigrationWiringTests
             Assert.That(plugin, Does.Contain("MigrateOldDefaultBool(Use24HourTime.Value, true, false, finalDefaultsMigrated)"));
             Assert.That(plugin, Does.Contain("MigrateOldDefaultBool(EnableExtendedAvatarStyles.Value, false, true, finalDefaultsMigrated)"));
             Assert.That(plugin, Does.Contain("MigrateOldDefaultBool(EnableChalkboardPersistence.Value, false, true, finalDefaultsMigrated)"));
-            Assert.That(plugin, Does.Contain("SweepSettingsPolicy.ResolveStartupIntervalMinutes(SweepIntervalMinutes.Value, freshInstall, sweepDefaultsMigrated, sweepTenMinuteSafetyMigrated)"));
+            Assert.That(plugin, Does.Contain("SweepSettingsPolicy.ResolveStartupIntervalMinutes(SweepIntervalMinutes.Value, freshInstall, sweepDefaultsMigrated, sweepTenMinuteSafetyMigrated, sweepOverlapAvoidanceMigrated)"));
             Assert.That(plugin, Does.Contain("MigrateAutomaticCleanupOptIn(EnableAutoSweep.Value, sweepAutomaticOptInMigrated)"));
             Assert.That(File.ReadAllText(Path.Combine(Root, "src", "Core", "SweepSettingsPolicy.cs")), Does.Contain("MigrateTenMinuteSafetyInterval(migrated, tenMinuteSafetyMigrated)"), "Older configs still get the safety step; fresh installs skip it.");
             Assert.That(plugin, Does.Not.Contain("MigrateTenMinuteSafetyInterval(migrated, sweepAutomaticOptInMigrated)"));

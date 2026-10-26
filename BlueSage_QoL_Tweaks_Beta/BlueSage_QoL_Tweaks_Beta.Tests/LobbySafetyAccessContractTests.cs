@@ -24,7 +24,7 @@ public sealed class LobbySafetyAccessContractTests
             Assert.That(menu, Does.Contain("if (_tab == 4 && !showLobbySafetyTab)"));
             Assert.That(menu, Does.Contain("Plugin.ShouldShowLobbySafetyTab(out LobbySafetyAccessState accessState"));
             Assert.That(menu, Does.Contain("LobbySafetyAccessState.HelperWaitingForHost"));
-            Assert.That(menu, Does.Contain("secure host channel pending"));
+            Assert.That(menu, Does.Contain("Helper assigned • waiting for the host"));
             Assert.That(menu.IndexOf("HelperWaitingForHost", StringComparison.Ordinal), Is.LessThan(menu.IndexOf("DrawVerifiedSafetyRoster", StringComparison.Ordinal)));
             Assert.That(menu, Does.Contain("string hostOnly = Plugin.CanManageHelpers()"));
             Assert.That(mentions, Does.Contain("Plugin.CanUseLobbySafety(out _) && \"lobby\".StartsWith"));
@@ -114,10 +114,11 @@ public sealed class LobbySafetyAccessContractTests
             Assert.That(plugin, Does.Contain("_nextModerationCapabilityPublishAt = Time.unscaledTime + 5f"));
             Assert.That(plugin, Does.Contain("SteamIdModerationController.PublishHostCapability()"));
             Assert.That(menu, Does.Contain("LobbySafetyAccessState accessState = SteamIdModerationController.GetLocalAccessState"));
-            Assert.That(menu, Does.Contain("This unlocks automatically; no command is required."));
-            Assert.That(menu, Does.Contain("Refresh Access Now"));
+            // Round 5d voice pass: player words for the same automatic unlock and optional recheck.
+            Assert.That(menu, Does.Contain("Your tools unlock by themselves once the host's BlueSage answers. No command needed."));
+            Assert.That(menu, Does.Contain("\"Check Again\", \"Check again now. BlueSage also keeps checking on its own.\""));
             Assert.That(menu, Does.Contain("GetVerifiedRoster(out string rosterStatus)"));
-            Assert.That(menu, Does.Contain("v3 member-data capability"));
+            Assert.That(menu, Does.Not.Contain("v3 member-data capability"), "protocol words stay out of player text");
         });
     }
 
@@ -195,20 +196,20 @@ public sealed class LobbySafetyAccessContractTests
         Assert.Multiple(() =>
         {
             Assert.That(menu, Does.Contain("if (isHost)\n        {\n            GUILayout.Space(12f);\n            DrawOfflineBanEntry();\n            GUILayout.Space(12f);\n            DrawNativeBanRecords();"));
-            Assert.That(menu, Does.Contain("Add exact off-roster SteamID64"));
+            Assert.That(menu, Does.Contain("Ban a Steam ID that isn't in the lobby"));
             Assert.That(menu, Does.Contain("Confirm Preview"));
-            Assert.That(menu, Does.Contain("Native banned players •"));
+            Assert.That(menu, Does.Contain("The game's ban list •"));
             Assert.That(menu, Does.Contain("Copy Banned SteamID64"));
             Assert.That(menu, Does.Contain("Preview SID Unban"));
             Assert.That(menu, Does.Contain("Confirm SID Unban"));
-            Assert.That(menu, Does.Contain("Click again to clear this native-ban selection."));
-            Assert.That(menu, Does.Contain("No native ban is selected."));
+            Assert.That(menu, Does.Contain("Click again to clear this selection."));
+            Assert.That(menu, Does.Contain("No saved ban is selected."));
             Assert.That(menu, Does.Contain("Clear Selection"));
             Assert.That(menu, Does.Not.Contain("selected = records[start]"));
             Assert.That(menu, Does.Contain("Confirm Exact SID Ban"));
             Assert.That(menu, Does.Contain("Confirm Suspect Ban"));
             Assert.That(moderation, Does.Contain("if (!Plugin.CanManageHelpers())"));
-            Assert.That(moderation, Does.Contain("current client is not the verified host"));
+            Assert.That(moderation, Does.Contain("only the lobby host can see the ban list"));
             Assert.That(moderation, Does.Contain("bans.BanServerPlayers.Count != bans.BanServerPlayerNicks.Count"));
             Assert.That(plugin, Does.Contain("PreviewSidUnbanFromQolMenu"));
             Assert.That(plugin, Does.Contain("ConfirmSidUnbanFromQolMenu"));

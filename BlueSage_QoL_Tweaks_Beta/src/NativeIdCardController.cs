@@ -24,6 +24,9 @@ internal static class NativeIdCardController
     private const string NativeIdCardUnconfirmedToast =
         "ID card not opened: BlueSage can't confirm this player's Steam ID yet. Try again in a moment, or ask the host or a Helper.";
 
+    private const float UnconfirmedChatGapSeconds = 30f;
+    private static float _lastUnconfirmedChatAt = -UnconfirmedChatGapSeconds;
+
     private static readonly FieldInfo PlayerSteamIdField =
         AccessTools.Field(typeof(PlayerItemController), "_playerSteamId");
 
@@ -47,11 +50,23 @@ internal static class NativeIdCardController
                 requireObservedIndex,
                 callerKind,
                 out NativeIdCardTarget target,
-                out NativeIdCardResolutionDecision decision))
+                out NativeIdCardResolutionDecision decision,
+                allowReadOnlyNativeFallback: true))
         {
             if (decision?.State == NativeIdCardResolutionState.FreshEvidenceUnavailable)
             {
-                Plugin.Instance?.ShowToast(NativeIdCardUnconfirmedToast);
+                // Round 5h: chat twin too, so the message is not lost when Toast Pop-ups is off, but at most one chat line
+                // every 30 seconds (the lobby is often mid-match while a click is refused); the toast dedupes itself.
+                float now = UnityEngine.Time.unscaledTime;
+                if (now - _lastUnconfirmedChatAt >= UnconfirmedChatGapSeconds)
+                {
+                    _lastUnconfirmedChatAt = now;
+                    Plugin.AddLocalNotificationWithToast(NativeIdCardUnconfirmedToast);
+                }
+                else
+                {
+                    Plugin.Instance?.ShowToast(NativeIdCardUnconfirmedToast);
+                }
             }
             return false;
         }
@@ -108,7 +123,8 @@ internal static class NativeIdCardController
         bool requireObservedIndex,
         NativeIdCardCallerKind callerKind,
         out NativeIdCardTarget target,
-        out NativeIdCardResolutionDecision decision)
+        out NativeIdCardResolutionDecision decision,
+        bool allowReadOnlyNativeFallback = false)
     {
         if (TryResolveCurrentRowOnce(
                 source,
@@ -120,7 +136,8 @@ internal static class NativeIdCardController
                 requireObservedIndex,
                 callerKind,
                 out target,
-                out decision) ||
+                out decision,
+                allowReadOnlyNativeFallback) ||
             decision.State != NativeIdCardResolutionState.NativeRowStaleRefreshable)
         {
             return target != null;
@@ -154,7 +171,8 @@ internal static class NativeIdCardController
             requireObservedIndex,
             callerKind,
             out target,
-            out decision);
+            out decision,
+            allowReadOnlyNativeFallback);
     }
 
     private static bool TryResolveCurrentRowOnce(
@@ -167,7 +185,8 @@ internal static class NativeIdCardController
         bool requireObservedIndex,
         NativeIdCardCallerKind callerKind,
         out NativeIdCardTarget target,
-        out NativeIdCardResolutionDecision decision)
+        out NativeIdCardResolutionDecision decision,
+        bool allowReadOnlyNativeFallback)
     {
         target = null;
         PlayerPanelController panel = NetworkSingleton<PlayerPanelController>.I;
@@ -205,7 +224,28 @@ internal static class NativeIdCardController
                 ? expectedPlayerId ?? string.Empty
                 : currentRowPlayerId;
 
-        int resolvedIndex = freshResolutionSucceeded ? evidence.RosterIndex : -1;
+        // Round 4 WS3: view-only callers (opening the ID card / Steam profile) may use the game's own row when our
+        // verified evidence is unavailable, e.g. a player who rejoined via a reconnect mod. Every wrong-row guard below
+        // still runs. Evidence copies and moderation never pass allowReadOnlyNativeFallback. The card opened this way
+        // still carries the game's own Ban button; for the host that click is routed by NativeBanRoutePatch (Stage C P1).
+        string gameListSteamIdAtRow =
+            currentRow != null && currentRowIndex < panel.PlayerSteamIDs.Count
+                ? panel.PlayerSteamIDs[currentRowIndex] ?? string.Empty
+                : string.Empty;
+        int nativeIndex = -1;
+        bool nativeFallback =
+            allowReadOnlyNativeFallback &&
+            NativeIdCardReadOnlyFallbackPolicy.TryUseNativeRow(
+                freshResolutionSucceeded,
+                requestedSteamId,
+                currentRow != null ? currentRowIndex : -1,
+                gameListSteamIdAtRow,
+                currentRowSteamId,
+                out nativeIndex);
+        bool identityReady = freshResolutionSucceeded || nativeFallback;
+        string resolvedSteamId = freshResolutionSucceeded ? evidence.SteamId : nativeFallback ? requestedSteamId ?? string.Empty : string.Empty;
+        string resolvedPlayerId = freshResolutionSucceeded ? evidence.NetworkPlayerId : nativeFallback ? currentRowPlayerId : string.Empty;
+        int resolvedIndex = freshResolutionSucceeded ? evidence.RosterIndex : nativeFallback ? nativeIndex : -1;
         NetworkTransform currentTransform =
             nativeListsAligned &&
             resolvedIndex >= 0 &&
@@ -233,9 +273,9 @@ internal static class NativeIdCardController
         {
             CallerKind = callerKind,
             RequestedSteamId = requestedSteamId ?? string.Empty,
-            FreshResolutionSucceeded = freshResolutionSucceeded,
-            FreshResolvedSteamId = freshResolutionSucceeded ? evidence.SteamId : string.Empty,
-            FreshResolvedPlayerId = freshResolutionSucceeded ? evidence.NetworkPlayerId : string.Empty,
+            FreshResolutionSucceeded = identityReady,
+            FreshResolvedSteamId = resolvedSteamId,
+            FreshResolvedPlayerId = resolvedPlayerId,
             ExpectedPlayerId = effectiveExpectedPlayerId,
             FreshResolvedIndex = resolvedIndex,
             ExpectedIndex = effectiveExpectedIndex,
@@ -256,13 +296,13 @@ internal static class NativeIdCardController
                 !requireObservedIndex ||
                 (expectedTransform != null &&
                  ReferenceEquals(currentTransform, expectedTransform)),
-            FinalTupleStable = freshResolutionSucceeded &&
+            FinalTupleStable = identityReady &&
                                currentPlayerController != null &&
                                IsCurrentTupleStable(
                                    panel,
                                    resolvedIndex,
                                    requestedSteamId,
-                                   evidence.NetworkPlayerId,
+                                   resolvedPlayerId,
                                    expectedRow,
                                    currentTransform,
                                    currentPlayerController,
@@ -292,9 +332,11 @@ internal static class NativeIdCardController
             NetworkTransform = currentTransform,
             PlayerController = currentPlayerController,
             PlayerInfo = SnapshotPlayerIdInfo(currentPlayerInfo),
-            SteamId = evidence.SteamId,
-            PlayerId = evidence.NetworkPlayerId,
-            DisplayNameRaw = evidence.DisplayNameRaw,
+            SteamId = resolvedSteamId,
+            PlayerId = resolvedPlayerId,
+            DisplayNameRaw = freshResolutionSucceeded
+                ? evidence.DisplayNameRaw
+                : System.Text.Encoding.Unicode.GetString(currentPlayerInfo.Name ?? new byte[0]),
             PlayerIndex = decision.PlayerIndex,
         };
         return true;

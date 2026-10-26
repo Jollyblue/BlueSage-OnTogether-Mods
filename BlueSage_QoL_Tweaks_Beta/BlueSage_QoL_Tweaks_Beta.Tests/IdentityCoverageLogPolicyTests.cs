@@ -43,6 +43,39 @@ public sealed class IdentityCoverageLogPolicyTests
         });
     }
 
+    // Round 4 Stage D, log diet #6: the controller used to append confirmed/transport/attested counts to the policy's
+    // key, which put the count churn back (20+ lines per big-lobby join wave). The log key now adds only two
+    // booleans (transport unavailable, any Steam-ID mismatch); the fine, count-bearing key drives the journal status
+    // row instead, so the counts still land somewhere, just not in LogOutput every refresh.
+    [Test]
+    public void Coverage_warning_fires_on_state_change_only_and_the_counts_go_to_the_journal()
+    {
+        string root = TestContext.CurrentContext.TestDirectory;
+        while (!File.Exists(Path.Combine(root, "BlueSage_QoL_Tweaks_Beta.csproj")))
+        {
+            root = Directory.GetParent(root)?.FullName ?? throw new DirectoryNotFoundException();
+        }
+
+        string controller = File.ReadAllText(Path.Combine(root, "src", "PlayerIdentityEvidenceController.cs")).Replace("\r\n", "\n");
+        int start = controller.IndexOf("private static void LogCoverageTransition(RosterSnapshot snapshot)", StringComparison.Ordinal);
+        string body = controller.Substring(start, controller.IndexOf("\n    }\n", start, StringComparison.Ordinal) - start);
+        Assert.Multiple(() =>
+        {
+            Assert.That(body, Does.Contain("string logKey = IdentityCoverageLogPolicy.BuildStateKey("));
+            Assert.That(body, Does.Contain("\"|\" + (snapshot.SteamIdMismatchCount > 0) +"));
+            Assert.That(body, Does.Contain("\"|\" + snapshot.TransportUnavailable;"));
+            Assert.That(body, Does.Contain("string journalKey = logKey +"), "The journal row keys on the counts.");
+            int journalKeyStart = body.IndexOf("string journalKey = logKey +", StringComparison.Ordinal);
+            Assert.That(body.IndexOf("\"|\" + snapshot.IdentityConfirmed.Length +", StringComparison.Ordinal), Is.GreaterThan(journalKeyStart), "Counts belong to the journal key, not the log key.");
+            Assert.That(body.IndexOf("\"|\" + snapshot.TransportVerifiedCount +", StringComparison.Ordinal), Is.GreaterThan(journalKeyStart));
+            // Round 5 F: the log-key early return is the hysteresis policy (a flip must hold 60 s; fail-closed reminds hourly).
+            Assert.That(body, Does.Contain("StableStateLogPolicy.Observe("));
+            Assert.That(body, Does.Contain("remindWhileHeld: !snapshot.CoverageComplete"));
+            Assert.That(body, Does.Not.Contain("_lastCoverageTransitionKey"));
+            Assert.That(body.IndexOf("HostJournalController.RecordCoverage(", StringComparison.Ordinal), Is.LessThan(body.IndexOf("StableStateLogPolicy.Observe(", StringComparison.Ordinal)), "The journal row is written before the log hysteresis early return.");
+        });
+    }
+
     private static string Invoke(MethodInfo method, params object[] arguments) =>
         (string)(method.Invoke(null, arguments) ?? string.Empty);
 }

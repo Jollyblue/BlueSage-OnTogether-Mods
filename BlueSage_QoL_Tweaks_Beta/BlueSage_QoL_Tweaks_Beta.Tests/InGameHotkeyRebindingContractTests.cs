@@ -178,7 +178,7 @@ public sealed class InGameHotkeyRebindingContractTests
             Assert.That(menu, Does.Contain("DrawHotkeyRow(\"QoL Menu\", Plugin.QolMenuKey, Plugin.HotkeyBindTarget.QolMenu"));
             Assert.That(menu, Does.Contain("DrawHotkeyRow(\"Style Helper\", Plugin.StyleMenuKey, Plugin.HotkeyBindTarget.StyleMenu"));
             Assert.That(menu, Does.Contain("DrawHotkeyRow(\"Noclip / Fly\", Plugin.NoclipFlyKey, Plugin.HotkeyBindTarget.NoclipFly"));
-            Assert.That(menu, Does.Contain("DrawHotkeyRow(\"Manual Sweep\", Plugin.ManualSweepKey, Plugin.HotkeyBindTarget.ManualSweep"));
+            Assert.That(menu, Does.Contain("DrawHotkeyRow(\"Run Cleanup\", Plugin.ManualSweepKey, Plugin.HotkeyBindTarget.ManualSweep"));
             Assert.That(menu, Does.Contain("Plugin.Instance.BeginRebindHotkey(target)"));
             Assert.That(menu, Does.Contain("IsAwaitingHotkeyRebind"));
         });

@@ -16,6 +16,16 @@ internal readonly struct SweepMenuActionState
 
 internal static class SweepMenuActionPolicy
 {
+    // Voice pass (2026-10-23): memory cleanup is "cleanup" in player text. A cleanup you asked for always answers,
+    // and a refusal answers with the specific reason the plugin already gave, never a generic either/or.
+    internal const string StartedMessage = "Cleanup started.";
+    internal const string PausedNotice = "Cleanup is resting because another cleanup mod is already doing it.";
+    internal const string BusyNotice = "Cleanup is already running.";
+    internal const string StartFailedNotice = "Cleanup couldn't start this time. Try again in a moment.";
+    internal const string RunFailedNotice = "Cleanup couldn't finish this time. Try again in a moment.";
+    internal const string CompletedNotice = "BlueSage cleanup is done.";
+    internal const string GameCleanupToast = "The game is running its own cleanup; a short pause is normal.";
+
     internal static SweepMenuActionState Resolve(bool manualSweepAllowed)
     {
         return manualSweepAllowed
@@ -26,13 +36,29 @@ internal static class SweepMenuActionPolicy
             : new SweepMenuActionState(
                 enabled: false,
                 label: "BlueSage Cleanup: Standby",
-                tooltip: "A compatibility guard currently blocks manual cleanup. Automatic Cleanup and the game's native cleanup settings are unchanged.");
+                tooltip: "Another cleanup mod is already doing this, so BlueSage cleanup is resting. Automatic Cleanup and the game's own cleanup settings are unchanged.");
     }
 
-    internal static string BuildCompletionMessage(bool started)
+    internal static string BuildCompletionMessage(bool started, string refusalNotice)
     {
-        return started
-            ? "Asset cleanup started."
-            : "Asset cleanup did not start because compatibility blocked cleanup or another cleanup is already in progress.";
+        if (started)
+        {
+            return StartedMessage;
+        }
+
+        return string.IsNullOrEmpty(refusalNotice) ? StartFailedNotice : refusalNotice;
+    }
+
+    // The game's own 30-minute cleanup is quiet by default, like BlueSage's automatic one; the toast shows only
+    // when the player turned cleanup notices on, and never for BlueSage's own cleanup (which announces itself).
+    internal static bool ShouldToastGameCleanup(bool qolCleanupCreatingRoutine, bool notifyOnCleanup)
+    {
+        return notifyOnCleanup && !qolCleanupCreatingRoutine;
+    }
+
+    // Only a cleanup the player asked for answers a failure; the automatic timer stays quiet and logs instead.
+    internal static bool ShouldAnnounceRunFailure(string trigger)
+    {
+        return !string.Equals(trigger, "automatic timer", System.StringComparison.Ordinal);
     }
 }

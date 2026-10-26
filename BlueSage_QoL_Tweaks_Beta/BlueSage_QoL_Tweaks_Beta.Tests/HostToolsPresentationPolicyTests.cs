@@ -35,7 +35,8 @@ public sealed class HostToolsPresentationPolicyTests
             Assert.That(result.Meaning, Does.Contain("matching visible player rows"));
             Assert.That(result.Advice, Does.Contain("Wait a few seconds")
                 .And.Contain("close and reopen the player list")
-                .And.Contain("safely unavailable"));
+                .And.Contain("Players already matched can still be managed")
+                .And.Contain("stays protected until they are"), "Round 5e: per-row, not lobby-wide.");
             Assert.That(result.PlayerSummary, Is.EqualTo("Players matched safely: 5 - checking for updates"));
         });
     }
@@ -84,7 +85,7 @@ public sealed class HostToolsPresentationPolicyTests
             Assert.That(result.Tone, Is.EqualTo(HostToolsTone.Attention));
             Assert.That(result.Meaning, Does.Contain("Large-lobby capacity could not be confirmed")
                 .And.Contain("Ordinary hosting remains available"));
-            Assert.That(result.Advice, Does.Contain("only one PlayerLimitLift")
+            Assert.That(result.Advice, Does.Contain("only one big-lobby mod")
                 .And.Contain("restart the game"));
             Assert.That(result.LargeLobbySummary, Is.EqualTo("Large-lobby support: Needs attention"));
         });

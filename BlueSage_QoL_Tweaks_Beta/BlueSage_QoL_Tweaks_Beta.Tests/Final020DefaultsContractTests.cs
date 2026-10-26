@@ -19,7 +19,7 @@ public sealed class Final020DefaultsContractTests
             "EnableReconnectAnnouncement", "EnableHostHealthMonitor", "EnableFocusAnywhere",
             "EnableEnhancedPlayerPanel", "EnableCloneShield", "EnablePingMentions",
             "EnablePingSound", "EnableChatCopy", "EnableChatUrlLinks",
-            "EnableMiniMapPlayerLabels", "EnableMiniMapFriendColors", "EnableLocalAuditExports"
+            "EnableMiniMapPlayerLabels", "EnableMiniMapFriendColors"
         };
 
         foreach (string key in defaultOn)
@@ -28,6 +28,8 @@ public sealed class Final020DefaultsContractTests
         }
 
         Assert.That(plugin, Does.Match(@"EnableSpoons\s*=\s*Config\.Bind\([^;]+,\s*false,"));
+        // Round 5d: the local audit is optional and off by default (LocalFileBudgetPolicy, migration local-audit-off-v6).
+        Assert.That(plugin, Does.Match(@"EnableLocalAuditExports\s*=\s*Config\.Bind\([^;]+,\s*false,"));
         Assert.That(plugin, Does.Contain("EnableAutoSweep = Config.Bind(\"Asset Sweep\", \"EnableAutoSweep\", publicDefaults.AutomaticCleanup"));
         Assert.That(plugin, Does.Contain("EnablePlayerRenderSaver = Config.Bind(\"Performance\", \"EnablePlayerRenderSaver\", publicDefaults.PlayerRenderSaver"));
         Assert.That(plugin, Does.Contain("EnablePerformanceOverlay = Config.Bind(\"Performance Overlay\", \"EnablePerformanceOverlay\", publicDefaults.PerformanceOverlay"));
@@ -49,7 +51,8 @@ public sealed class Final020DefaultsContractTests
             Assert.That(plugin, Does.Contain("BlackChatOutlineColor\", \"C0C0C0\""));
             Assert.That(plugin, Does.Contain("BlackNamesOutline\", true"));
             Assert.That(history, Does.Contain("DefaultRows = 150"));
-            Assert.That(plugin, Does.Contain("Auto Reconnected by Blues - BlueSage QoL Tweaks Mod"));
+            // Voice pass (2026-10-23): the public lobby line after a reconnect is gentle and plain.
+            Assert.That(plugin, Does.Contain("LockedReconnectAnnouncementMessage = \"I'm back after a connection hiccup (BlueSage QoL).\""));
             Assert.That(plugin, Does.Not.Contain("ConfigMigrationTarget = PluginVersion +"));
             Assert.That(plugin, Does.Contain("ConfigMigrationPolicy.RecordMigration"));
         });

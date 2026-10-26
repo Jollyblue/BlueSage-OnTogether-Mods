@@ -115,10 +115,10 @@ public sealed class CommunityBanSyncPolicyTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(friendlyReady, Is.EqualTo("Community safety list ready: 18 trusted entries checked locally. No player action was taken."));
+            Assert.That(friendlyReady, Is.EqualTo("Community Safety List: up to date, 18 names. It only adds names; it never kicks or bans."));
             Assert.That(friendlyReady, Does.Not.Contain("http").And.Not.Contain("sha256").And.Not.Contain("revision"));
-            Assert.That(friendlyFailed, Is.EqualTo("Community safety list could not refresh safely. Your existing local list was left unchanged."));
-            Assert.That(CommunityBanSyncPolicy.BuildFriendlyStatusText(new CommunityBanSyncStatus()), Is.EqualTo("Community safety list is off."));
+            Assert.That(friendlyFailed, Is.EqualTo("Community Safety List: couldn't update this time. Your saved list wasn't changed."));
+            Assert.That(CommunityBanSyncPolicy.BuildFriendlyStatusText(new CommunityBanSyncStatus()), Is.EqualTo("Community Safety List: off."));
         });
     }
 }

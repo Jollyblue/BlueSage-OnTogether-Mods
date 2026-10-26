@@ -153,9 +153,9 @@ internal static class CommunityBanListController
     {
         try
         {
-            string directory = Path.Combine(Paths.ConfigPath, "BlueSageAudit");
-            Directory.CreateDirectory(directory);
-            string target = Path.Combine(directory, "community-ban-source-attestation.json");
+            // Round 5d: BlueSageQoLModSuite/trackers/community-ban-attestation.json.
+            string target = ModSuitePaths.Current.AttestationPath;
+            Directory.CreateDirectory(Path.GetDirectoryName(target));
             string temp = target + ".tmp";
             string backup = target + ".bak";
             File.WriteAllText(

@@ -58,6 +58,42 @@ internal static class PluginCompatibility
     public const string AndrewAlphaGuid = "com.andrewlin.ontogether.alpha";
     public const string AndrewChalkyGuid = "com.andrewlin.ontogether.chalky";
     public const string AndrewDesyncGuid = "com.andrewlin.ontogether.desync";
+    public const string TogetherPlusGuid = "de.ghostystudios.togetherplus";
+
+    // Round 4 WS6 / review R11: the Helper-like mods the compatibility heads-up names, by exact GUID, in display
+    // order. Alpha is the command framework the AndrewLin moderation mods ride on; Sweep, Hush and the rest are
+    // handled by their own stand-down rules above and are not "Helper-like" for the notice.
+    private static readonly KeyValuePair<string, string>[] HelperLikeMods =
+    {
+        new KeyValuePair<string, string>(TogetherPlusGuid, "TogetherPlus"),
+        new KeyValuePair<string, string>(AndrewAlphaGuid, "Alpha"),
+    };
+
+    public static IReadOnlyList<string> DetectHelperLikeMods(IEnumerable<string> loadedPluginGuids)
+    {
+        HashSet<string> loaded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (loadedPluginGuids != null)
+        {
+            foreach (string guid in loadedPluginGuids)
+            {
+                if (!string.IsNullOrWhiteSpace(guid))
+                {
+                    loaded.Add(guid.Trim());
+                }
+            }
+        }
+
+        List<string> detected = new List<string>();
+        foreach (KeyValuePair<string, string> mod in HelperLikeMods)
+        {
+            if (loaded.Contains(mod.Key))
+            {
+                detected.Add(mod.Value);
+            }
+        }
+
+        return detected;
+    }
 
     public static PluginCompatibilityResult Evaluate(
         IEnumerable<string> loadedPluginGuids,

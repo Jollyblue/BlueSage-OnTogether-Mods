@@ -17,8 +17,6 @@ internal static class VoicePositionRateGuardPatch
     private static MethodBase _targetMethod;
     private static bool _targetResolutionAttempted;
     private static float _nextPruneAt;
-    private static long _forwarded;
-    private static long _suppressed;
     private static bool _activationLogged;
 
     private sealed class PositionState
@@ -102,7 +100,6 @@ internal static class VoicePositionRateGuardPatch
                 state.Channel,
                 VoicePositionRatePolicy.DefaultMinimumIntervalSeconds))
         {
-            _suppressed++;
             if (!_activationLogged)
             {
                 _activationLogged = true;
@@ -113,7 +110,6 @@ internal static class VoicePositionRateGuardPatch
 
         state.LastForwardedAt = now;
         state.Channel = channelName;
-        _forwarded++;
         return true;
     }
 
@@ -139,10 +135,5 @@ internal static class VoicePositionRateGuardPatch
         {
             States.Remove(key);
         }
-    }
-
-    internal static string GetDiagnosticSummary()
-    {
-        return $"enabled={Plugin.EnableVivoxPositionRateGuard?.Value == true},available={_targetMethod != null},tracked={States.Count},forwarded={_forwarded},suppressed={_suppressed}";
     }
 }
